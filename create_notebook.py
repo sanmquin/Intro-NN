@@ -190,6 +190,16 @@ add_markdown("""## 4. Model 1: Simple ANN from Scratch (Pure Python & NumPy)
 
 To truly understand how neural networks learn, we will build one from absolute scratch.
 
+### Detailed Architecture Profile (Model 1)
+Our first neural network is a fully connected feed-forward Multi-Layer Perceptron (MLP) built strictly using NumPy.
+- **Input Dimension**: 12 (represents the sample sequence $X = [x_1, \dots, x_{12}]$)
+- **First Hidden Layer**: `ScratchLinear(12, 32)` -> 32 neurons, utilizing standard He (Kaiming) weight initialization.
+- **First Activation**: `ScratchReLU()` -> Piecewise linear rectified activation.
+- **Second Hidden Layer**: `ScratchLinear(32, 16)` -> 16 neurons.
+- **Second Activation**: `ScratchReLU()`
+- **Output Layer**: `ScratchLinear(16, 2)` -> Produces a 2D prediction vector.
+- **Final Activation**: `ScratchIdentity()` -> Output is left unconstrained (crucial for regression tasks).
+
 ### Mathematical Foundations of Backpropagation
 
 A feedforward neural network computes predictions through a sequence of layer transformations:
@@ -372,10 +382,15 @@ add_markdown("""## 5. Model 2: Medium ANN with Framework (PyTorch)
 
 Building networks from scratch is educational, but modern deep learning rely on frameworks like **PyTorch** to handle backpropagation automatically using computation graphs and **Autograd**.
 
-In this section, we will:
-1. Define a standard multilayer regression network using PyTorch's `nn.Sequential`.
-2. Convert our NumPy datasets into PyTorch Tensors.
-3. Use PyTorch's efficient **Adam** optimizer to train the network.
+### Detailed Architecture Profile (Model 2)
+Model 2 is structurally identical to Model 1 (Simple ANN) but is constructed using PyTorch's `nn.Sequential` and utilizes the highly efficient **Adam Optimizer** instead of standard mini-batch SGD.
+- **Layers**:
+  - `nn.Linear(12, 32)`
+  - `nn.ReLU()`
+  - `nn.Linear(32, 16)`
+  - `nn.ReLU()`
+  - `nn.Linear(16, 2)`
+- **Optimization**: Adam with a starting learning rate of $0.01$. The Adam optimizer computes adaptive learning rates for each parameter, resulting in significantly faster convergence.
 """)
 
 add_code("""# Convert scaled datasets to PyTorch Tensors
@@ -447,15 +462,18 @@ add_markdown("""## 6. Model 3: Large Production-Quality ANN (Modular PyTorch)
 
 In production environments, hardcoding neural network sizes and training loops is highly discouraged. Production-grade deep learning systems require structure, robust resource management, configuration safety, hyperparameter adaptation, modular tracking, and early stopping.
 
-### Key Production-Quality Enhancements:
-1. **Config Dataclass**: Single source of truth for all configurations.
-2. **Dataset & DataLoader**: Use PyTorch native abstractions for clean batching, shuffling, and multi-threaded data loading.
-3. **Advanced Neural Network Architecture**:
-   - **Residual Connections**: Helps gradients propagate without vanishing/exploding.
-   - **Layer Normalization**: Stabilizes activations throughout layers.
-   - **Dropout**: Regularizer to prevent overfitting.
-   - **GELU Activation**: State-of-the-art activation function (used in GPT and modern Transformers).
-4. **Structured Trainer Class**: Contains early stopping, dynamic learning rate adjustment (`ReduceLROnPlateau`), checkpointing, and modular train/validation loops.
+### Detailed Architecture Profile (Model 3)
+Our third network utilizes standard modern architectural best practices to overcome optimization roadblocks:
+- **Input Dimension**: 12
+- **Projection Layer**: `nn.Linear(12, 64)` followed by `nn.GELU()`. GELU (Gaussian Error Linear Unit) has a smooth, non-zero gradient for negative values, resolving the "dying ReLU" problem.
+- **Residual Blocks**: Several `ProductionResidualBlock(64)` components are chained together.
+  - *Layer Normalization (`LayerNorm`)*: Standardizes neural activations, making optimization landscapes smoother.
+  - *Dropout (rate=0.15)*: Randomly zeroes activations during training to prevent co-adaptation (overfitting).
+  - *Residual Path ($x + f(x)$)*: Connects block inputs to block outputs. Gradients flow directly through addition operations, protecting deep networks from vanishing/exploding gradients.
+- **Output Head**: `nn.Linear(64, 2)`
+- **Optimization**: **AdamW** with weight decay to enforce L2 regularization on weights.
+- **Learning Rate Schedule**: `ReduceLROnPlateau` decreases learning rate by a factor of 0.5 whenever the validation loss stagnates for 5 epochs.
+- **Early Stopping**: Halts execution if validation loss fails to improve for 15 consecutive epochs, restoring the best discovered parameter state.
 """)
 
 add_code("""@dataclass
@@ -898,7 +916,17 @@ generate_learning_video(
 """)
 
 # --- Section 9: Conclusion ---
-add_markdown("""## 9. Key Insights & Conclusion
+add_markdown("""## 9. Key Insights, Structural Limitations & Conclusion
+
+### Physical and Mathematical Limitations of standard feed-forward networks
+This estimation problem reveals a fascinating split in difficulty:
+1. **Mean Prediction ($\mu$)**: The sample mean is a simple *linear* combination of the input variables: $\bar{x} = \frac{1}{D}\sum x_i$. Modern neural networks learn this almost perfectly, achieving $R^2 \approx 0.95$.
+2. **Variance Prediction ($\sigma^2$)**: The sample variance is a *quadratic* non-linear function of the inputs: $s^2 = \frac{1}{D-1}\sum x_i^2 - \frac{D}{D-1}\bar{x}^2$.
+
+#### Why is Variance (and Standard Deviation) Prediction so much harder?
+- **ReLU and Piecewise Linear Functions**: Standard MLPs utilizing ReLU activations are *piecewise linear* function approximators. To approximate a smooth quadratic curves (multi-dimensional parabolas) using flat line segments, a network requires an extremely large number of neurons and deep structures.
+- **Out of Distribution Scaling**: Piecewise linear approximations cannot extrapolate quadratically. Outside the training domain bounds, the network's predictions will degrade to linear extrapolation, causing substantial regression errors.
+- **Statistical Resolution**: The optimal estimator of variance requires squaring the sample values. Feedforward neural networks do not have explicit multiplication operators (e.g., Pi-sigma networks) or quadratic feature mappings inside their standard dense layers. To learn $x^2$, standard dense layers must synthesize it by taking the differences of many shifted ReLU functions, which is highly inefficient.
 
 In this tutorial, we successfully modeled a mathematical regression problem of statistical estimation by training three different levels of Artificial Neural Networks:
 
