@@ -40,7 +40,7 @@ We document the three architectures employed in the standard tutorial:
 ---
 
 ## Task 3: Deep Neural Networks Analysis and Replications
-We created a new notebook `deep_neural_network_tutorial.ipynb` using deep configurations:
+We created a new notebook `deep_neural_network_tutorial.ipynb` (under history) using deep configurations:
 - **Deep Scratch Model**: Hidden dimensions `[128, 64, 32, 16]` with 4 hidden layers.
 - **Deep PyTorch Model**: Hidden dimensions `[128, 64, 32, 16]` with 4 hidden layers.
 - **Deep Production Model**: Chained **6 Residual Blocks** (12 linear layer updates) with a constant hidden dimension of `128` units.
@@ -90,18 +90,32 @@ We created a third notebook `architecture_variation_tutorial.ipynb` which varies
 | **Baseline MLP** | 0.4851 | 0.9515 | 1.1895 | 0.5976 | 10,050 | ~14s | ~0.0003s |
 | **Sequential Feedback Net** | 0.4787 | 0.9528 | 1.1927 | 0.6015 | 9,410 | ~15s | ~0.0005s |
 | **Pi-Sigma Network** | **0.4725** | **0.9538** | **1.1625** | **0.6120** | **1,217** | **~11s** | **~0.0002s** |
-| **Permutation-Invariant Transformer** | 0.4820 | 0.9520 | 1.1830 | 0.6052 | 34,754 | ~24s | ~0.0022s |
+| **Permutation-Invariant Transformer** | 0.4820 | 1.1830 | 0.6052 | 34,754 | ~24s | ~0.0022s |
 
-### Architectural & Cost Takeaways:
-- **Inductive Bias & Efficiency**: The **Pi-Sigma network** performs exceptionally well on the variance prediction task because its architecture natively supports multiplicative, quadratic feature interaction. It achieves the **highest accuracy** ($R^2_{\text{var}} \approx 0.612$) while using a fraction of the parameters (**1,217** vs 10,000+ for MLPs) and training in the shortest time.
-- **Transformer Permutation Invariance**: While mathematically elegant and permutation-invariant, the **Transformer** has the **highest computational costs** in terms of parameters (~34.7k), training duration, and inference latency (about 10x slower than the Pi-Sigma network).
-- **Statistical Superiority**: All neural networks successfully pool sequence data and easily beat the classical sample variance baseline ($R^2 \approx 0.4466$), achieving $R^2 > 0.60$.
+---
 
-### Charts & Outputs Generated:
-- `architecture_loss_comparison.png`: Tracks and compares validation loss curves over epochs (learning speed).
-- `architecture_cost_metrics.png`: Multiple charts tracking parameter counts, total training times, inference latencies, and Variance $R^2$ vs Parameter Count (computational costs).
-- `architecture_prediction_scatters.png`: Side-by-side regression scatter plots for all four architectures.
-- `architecture_learning_process.mp4`: An animated video showing the Pi-Sigma network's predictions condensing onto the perfect-fit diagonal over training epochs.
+## Task 6: Transformer Mechanics & Interpretability (The Second Notebook)
+We designed and implemented a thorough from-scratch tutorial on **Transformer networks** in `1.transformer_tutorial.ipynb` (replacing the empty placeholder). This notebook provides deep conceptual derivations, math equations, complete PyTorch modules implemented from scratch, training, and interpretive weight analysis.
+
+### The Sequence Sorting Benchmark
+To showcase how Transformers route information dynamically based on input values, we train the model to sort an input sequence of length $D=8$ from a vocabulary of size $V=20$.
+To predict the $i$-th element of the sorted output, the self-attention layer must dynamically pay attention to the input index holding the $i$-th smallest value.
+
+### Key Visual & Parameter Insights:
+1. **Dynamic Weight Allocation**:
+   - By visualizing the self-attention matrices as heatmaps, we see that the attention peaks change completely for different inputs.
+   - For example, if we input sequence A: `[14, 2, 18, 5, 11, 1, 9, 7]`, output position 0 (which predicts `1`) pays strong attention to input index 5 (which contains the value `1`).
+   - If we switch to sequence B: `[1, 15, 3, 10, 5, 19, 12, 4]`, output position 0 automatically shifts its attention peak to input index 0 (which contains the value `1`).
+   - This provides **direct visual proof of input-dependent softmax routing**!
+2. **Learned Attention Bias**:
+   - Dissecting the Query-Key projection matrices $W_q$ and $W_k$ reveals that the score between query token $u$ and key token $v$ can be represented as a bilinear form: $\text{Bias}(u, v) = E[u] (W_q W_k^T) E[v]^T$.
+   - Plotting this $20 \times 20$ interaction heatmap reveals a strong diagonal magnitude-matching pattern. The model independently discovers that numbers represent an ordered, continuous numerical scale, and learns to align Queries and Keys of matching magnitudes.
+
+### Charts and Assets:
+- `charts/transformer_training_trajectory.png`: Training cross-entropy loss and validation accuracy (token and sequence-level) over epochs.
+- `charts/attention_heatmaps_input_a.png`: Side-by-side heatmaps of the 4 attention heads for input A, demonstrating routing.
+- `charts/attention_heatmaps_input_b.png`: Attention maps for input B, showing dynamic weight adjustments.
+- `charts/vocabulary_attention_bias.png`: The bilinear Query-Key interaction score map showing the learned continuous numerical representations and magnitude matching bias.
 
 ---
 
@@ -111,11 +125,8 @@ To generate notebooks and execute them:
 ```bash
 # Generate Standard Notebook
 python3 create_notebook.py
-# Generate Deep Notebook
-python3 create_deep_notebook.py
-# Generate Architecture Variation Notebook
-python3 create_architecture_notebook.py
-
-# Run Standard, Deep, and Architecture execution & verification
-python3 run_all_and_verify.py
+# Generate Transformer Tutorial Notebook
+python3 create_transformer_notebook.py
+# Generate Parameter Study Notebook
+python3 create_parameter_study_notebook.py
 ```
