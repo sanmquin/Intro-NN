@@ -31,6 +31,29 @@ class TestLabyrinthSolver(unittest.TestCase):
         self.assertEqual(self.grid[self.start[0]][self.start[1]], 1)
         self.assertEqual(self.grid[self.end[0]][self.end[1]], 2)
 
+    def test_edge_randomization(self):
+        # Any wall cell adjacent to a path cell (0, 1, or 2) in orth/diag direction is an edge.
+        # It gets a random integer between 3 and 8.
+        # Ensure that this constraint is satisfied across the grid.
+        for r in range(10):
+            for c in range(10):
+                val = self.grid[r][c]
+                if val >= 3 and val <= 8:
+                    # Must be adjacent to 0, 1, or 2
+                    is_adj = False
+                    for dr in [-1, 0, 1]:
+                        for dc in [-1, 0, 1]:
+                            if dr == 0 and dc == 0:
+                                continue
+                            nr, nc = r + dr, c + dc
+                            if 0 <= nr < 10 and 0 <= nc < 10:
+                                if self.grid[nr][nc] in (0, 1, 2):
+                                    is_adj = True
+                                    break
+                        if is_adj:
+                            break
+                    self.assertTrue(is_adj, f"Edge cell ({r}, {c}) has no adjacent path cell!")
+
     def test_bfs_shortest_path(self):
         # BFS must find a valid path from start to end
         path = solve_bfs(self.grid, start=self.start, end=self.end)

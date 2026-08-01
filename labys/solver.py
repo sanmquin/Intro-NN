@@ -15,7 +15,7 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_
     Generates a 10x10 labyrinth.
     - Walkable paths are 0.
     - Start is 1, End is 2.
-    - Path edges (visible walls) are labeled 3-8 based on adjacency.
+    - Path edges (visible walls) are labeled with random numbers between 3 and 8 inclusive.
     - Hidden/non-visible walls are labeled 9.
 
     The generation guarantees at least one valid path from start to end,
@@ -69,7 +69,10 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_
     grid[start[0]][start[1]] = 1
     grid[end[0]][end[1]] = 2
 
-    # Compute visibility labels 3-8, and 9 for completely hidden walls
+    # Compute visibility:
+    # Any wall cell adjacent to a path cell (value 0, 1, or 2) in orth/diag direction is an edge.
+    # It gets a random integer between 3 and 8.
+    # Inner wall cells without any path adjacency are labeled 9.
     final_grid = [[0 for _ in range(width)] for _ in range(height)]
     for r in range(height):
         for c in range(width):
@@ -77,34 +80,24 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_
             if val in (0, 1, 2):
                 final_grid[r][c] = val
             else:
-                is_n = (r > 0 and grid[r-1][c] in (0, 1, 2))
-                is_s = (r < height-1 and grid[r+1][c] in (0, 1, 2))
-                is_w = (c > 0 and grid[r][c-1] in (0, 1, 2))
-                is_e = (c < width-1 and grid[r][c+1] in (0, 1, 2))
+                # Check for path-adjacency (orthogonal or diagonal)
+                is_edge = False
+                for dr in [-1, 0, 1]:
+                    for dc in [-1, 0, 1]:
+                        if dr == 0 and dc == 0:
+                            continue
+                        nr, nc = r + dr, c + dc
+                        if 0 <= nr < height and 0 <= nc < width:
+                            if grid[nr][nc] in (0, 1, 2):
+                                is_edge = True
+                                break
+                    if is_edge:
+                        break
 
-                is_nw = (r > 0 and c > 0 and grid[r-1][c-1] in (0, 1, 2))
-                is_ne = (r > 0 and c < width-1 and grid[r-1][c+1] in (0, 1, 2))
-                is_sw = (r < height-1 and c > 0 and grid[r+1][c-1] in (0, 1, 2))
-                is_se = (r < height-1 and c < width-1 and grid[r+1][c+1] in (0, 1, 2))
-
-                num_orth = sum([is_n, is_s, is_w, is_e])
-                num_diag = sum([is_nw, is_ne, is_sw, is_se])
-
-                if num_orth == 0 and num_diag == 0:
-                    final_grid[r][c] = 9
-                elif num_orth == 1:
-                    if is_n:
-                        final_grid[r][c] = 3
-                    elif is_s:
-                        final_grid[r][c] = 4
-                    elif is_w:
-                        final_grid[r][c] = 5
-                    elif is_e:
-                        final_grid[r][c] = 6
-                elif num_orth > 1:
-                    final_grid[r][c] = 7
+                if is_edge:
+                    final_grid[r][c] = random.randint(3, 8)
                 else:
-                    final_grid[r][c] = 8
+                    final_grid[r][c] = 9
 
     return final_grid
 
