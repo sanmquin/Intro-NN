@@ -7,25 +7,22 @@ from torch.utils.data import Dataset, DataLoader
 from collections import deque
 
 # ---------------------------------------------------------
-# 1. Labyrinth Generation and Visibility Processing
+# 1. Non-Trivial Labyrinth Generation and Visibility Processing
 # ---------------------------------------------------------
 
-def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_paths=25):
+def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=6):
     """
-    Generates a 10x10 labyrinth.
+    Generates a sparse, non-trivial 10x10 labyrinth.
     - Walkable paths are 0.
     - Start is 1, End is 2.
-    - Path edges (visible walls) are labeled with random numbers between 3 and 8 inclusive.
+    - Path edges (visible walls) are randomly labeled between 3 and 8.
     - Hidden/non-visible walls are labeled 9.
 
-    The generation guarantees at least one valid path from start to end,
-    and carves extra paths to create multiple paths/loops.
+    This generator creates a single sparse primary path from start to end,
+    then carves a small, controlled number of loops to provide multiple paths
+    while keeping the path density low (around 20-30% of the grid).
     """
     grid = [[-1 for _ in range(width)] for _ in range(height)]
-
-    # Ensure start and end are walkable paths initially
-    grid[start[0]][start[1]] = 0
-    grid[end[0]][end[1]] = 0
 
     def get_neighbors(r, c):
         neighbors = []
@@ -35,41 +32,65 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_
                 neighbors.append((nr, nc))
         return neighbors
 
-    # Simple DFS to create a spanning tree maze
+    # 1. Find a primary path from start to end using randomized DFS
     visited = {start}
-    stack = [start]
-    while stack:
-        curr = stack[-1]
-        unvisited = [n for n in get_neighbors(*curr) if n not in visited]
-        if unvisited:
-            next_cell = random.choice(unvisited)
-            grid[next_cell[0]][next_cell[1]] = 0
-            visited.add(next_cell)
-            stack.append(next_cell)
-        else:
-            stack.pop()
+    path_found = []
 
-    grid[start[0]][start[1]] = 0
-    grid[end[0]][end[1]] = 0
+    def dfs(curr, path):
+        if curr == end:
+            path_found.extend(path + [end])
+            return True
+        neighbors = get_neighbors(*curr)
+        random.shuffle(neighbors)
+        for n in neighbors:
+            if n not in visited:
+                visited.add(n)
+                if dfs(n, path + [curr]):
+                    return True
+        return False
 
-    # Add extra paths to ensure multiple paths (loops)
-    # We increase this to guarantee high density of multiple paths
-    for _ in range(num_extra_paths):
-        wall_cells = [(r, c) for r in range(height) for c in range(width) if grid[r][c] == -1]
-        if wall_cells:
-            valid_walls = []
-            for wr, wc in wall_cells:
-                has_path_neighbor = any(grid[nr][nc] == 0 for nr, nc in get_neighbors(wr, wc))
-                if has_path_neighbor:
-                    valid_walls.append((wr, wc))
-            if valid_walls:
-                to_carve = random.choice(valid_walls)
-                grid[to_carve[0]][to_carve[1]] = 0
+    dfs(start, [])
 
+    # If for some reason DFS failed, fallback to direct L-path
+    if not path_found:
+        curr_r, curr_c = start
+        path_found.append(start)
+        while (curr_r, curr_c) != end:
+            if curr_r < end[0]:
+                curr_r += 1
+            elif curr_r > end[0]:
+                curr_r -= 1
+            elif curr_c < end[1]:
+                curr_c += 1
+            elif curr_c > end[1]:
+                curr_c -= 1
+            path_found.append((curr_r, curr_c))
+
+    # Mark the primary path in the grid
+    for r, c in path_found:
+        grid[r][c] = 0
+
+    # 2. Add controlled loops/extra paths
+    # We find wall cells that are adjacent to at least two path cells.
+    # Carving them creates a loop/alternative route.
+    loops_carved = 0
+    attempts = 0
+    while loops_carved < num_loops and attempts < 100:
+        attempts += 1
+        r = random.randint(0, height - 1)
+        c = random.randint(0, width - 1)
+        if grid[r][c] == -1:
+            # Count path neighbors
+            path_neighbors = [n for n in get_neighbors(r, c) if grid[n[0]][n[1]] == 0]
+            if len(path_neighbors) >= 2:
+                grid[r][c] = 0
+                loops_carved += 1
+
+    # 3. Mark start and end
     grid[start[0]][start[1]] = 1
     grid[end[0]][end[1]] = 2
 
-    # Compute visibility:
+    # 4. Compute visibility labels
     # Any wall cell adjacent to a path cell (value 0, 1, or 2) in orth/diag direction is an edge.
     # It gets a random integer between 3 and 8.
     # Inner wall cells without any path adjacency are labeled 9.
@@ -80,7 +101,6 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_extra_
             if val in (0, 1, 2):
                 final_grid[r][c] = val
             else:
-                # Check for path-adjacency (orthogonal or diagonal)
                 is_edge = False
                 for dr in [-1, 0, 1]:
                     for dc in [-1, 0, 1]:
@@ -138,13 +158,8 @@ def solve_bfs(grid, start=(0, 0), end=(9, 9)):
 def generate_transitions_from_shortest_path(grid, shortest_path):
     """
     Transforms a single shortest path into sequence-to-action transition steps.
-    Each step provides:
-      - The static 100-token representation of the labyrinth.
-      - The current position index (0-99).
-      - The target next step position index (0-99).
     """
     transitions = []
-    # Flat labyrinth grid
     flat_grid = [grid[r][c] for r in range(10) for c in range(10)]
 
     for i in range(len(shortest_path) - 1):
@@ -160,8 +175,6 @@ def generate_transitions_from_shortest_path(grid, shortest_path):
 class LabyrinthDataset(Dataset):
     """
     Dataset wrapping labyrinth state transitions.
-    Input: Flat grid (100 tokens, vocabulary size 10) + Current position index.
-    Target: Next position index (0-99).
     """
     def __init__(self, data_list):
         self.data = data_list
@@ -177,7 +190,7 @@ class LabyrinthDataset(Dataset):
             torch.tensor(next_idx, dtype=torch.long)
         )
 
-def build_datasets(num_labyrinths=200, train_ratio=0.8, seed=42):
+def build_datasets(num_labyrinths=500, train_ratio=0.8, seed=42):
     """
     Generates dataset of transitions from multiple random labyrinths.
     """
@@ -188,12 +201,10 @@ def build_datasets(num_labyrinths=200, train_ratio=0.8, seed=42):
     attempts = 0
     while success_count < num_labyrinths and attempts < num_labyrinths * 10:
         attempts += 1
-        # Random start/end configurations on the boundaries or corners
-        # Let's keep it robust and interesting by varying start/end
         start = (random.randint(0, 3), random.randint(0, 3))
         end = (random.randint(6, 9), random.randint(6, 9))
 
-        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_extra_paths=random.randint(15, 30))
+        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_loops=random.randint(4, 8))
         path = solve_bfs(grid, start=start, end=end)
         if path and len(path) > 1:
             transitions = generate_transitions_from_shortest_path(grid, path)
@@ -214,27 +225,12 @@ def build_datasets(num_labyrinths=200, train_ratio=0.8, seed=42):
 # ---------------------------------------------------------
 
 class LabyrinthTransformer(nn.Module):
-    """
-    A Transformer architecture to navigate a 10x10 labyrinth.
-    Takes a 100-token representation of the labyrinth grid (vocabulary 0..9)
-    and a token representing the current position.
-
-    Embeds both grid and position, adds learned spatial coordinate embeddings,
-    processes with a Transformer Encoder, and uses a cross-attention or direct pooling
-    to map to a 100-class action projection representing the next step choice.
-    """
     def __init__(self, embed_dim=64, num_heads=4, hidden_dim=128, num_layers=3):
         super(LabyrinthTransformer, self).__init__()
-        # Vocabulary: 0-9 (path, start, end, edges 3-8, hidden walls 9)
         self.grid_embedding = nn.Embedding(10, embed_dim)
-
-        # We also embed the current position index (0-99)
         self.pos_embedding = nn.Embedding(100, embed_dim)
-
-        # Spatial coordinate embedding for the 100 positions in the grid
         self.spatial_embedding = nn.Parameter(torch.randn(1, 100, embed_dim))
 
-        # Standard Transformer Encoder Layer
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
             nhead=num_heads,
@@ -244,32 +240,21 @@ class LabyrinthTransformer(nn.Module):
             batch_first=True
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        # Classification head projecting sequence-level state to 100 target grid cells
         self.fc_out = nn.Linear(embed_dim, 100)
 
     def forward(self, grid, curr_pos):
-        # grid shape: [Batch, 100], curr_pos shape: [Batch]
-        grid_emb = self.grid_embedding(grid)  # [Batch, 100, embed_dim]
-        grid_emb = grid_emb + self.spatial_embedding  # Add spatial layout context
+        grid_emb = self.grid_embedding(grid)
+        grid_emb = grid_emb + self.spatial_embedding
+        pos_emb = self.pos_embedding(curr_pos).unsqueeze(1)
+        x = grid_emb + pos_emb
 
-        # Inject the current position by adding its embedding to the grid embedding
-        # or concatenating. Let's do positional additive injection for elegance.
-        pos_emb = self.pos_embedding(curr_pos).unsqueeze(1)  # [Batch, 1, embed_dim]
+        out = self.transformer(x)
 
-        # Broadly combine current position context with grid layout
-        x = grid_emb + pos_emb  # Broadly broadcast current position context to all cells
-
-        # Process via transformer
-        out = self.transformer(x)  # [Batch, 100, embed_dim]
-
-        # We can extract the representation of the cell corresponding to the current position
-        # to predict the next step.
         batch_size = grid.size(0)
         batch_indices = torch.arange(batch_size, device=grid.device)
-        curr_cell_repr = out[batch_indices, curr_pos]  # [Batch, embed_dim]
+        curr_cell_repr = out[batch_indices, curr_pos]
 
-        logits = self.fc_out(curr_cell_repr)  # [Batch, 100]
+        logits = self.fc_out(curr_cell_repr)
         return logits
 
 # ---------------------------------------------------------
@@ -338,14 +323,6 @@ def train_model(model, train_loader, val_loader, epochs=30, lr=1e-3, device='cpu
 # ---------------------------------------------------------
 
 def solve_labyrinth_autoregressive(model, grid, start, end, max_steps=40, device='cpu'):
-    """
-    Navigates the labyrinth step-by-step from start to end using the trained transformer.
-    At each step:
-      - Predict the next step logit weights for all 100 positions.
-      - Filter predictions to enforce valid spatial moves (up, down, left, right to a walkable tile).
-      - Step to the highly-weighted neighbor.
-      - Return the actual navigated path.
-    """
     model.eval()
     height, width = len(grid), len(grid[0])
     curr_pos = start
@@ -364,29 +341,26 @@ def solve_labyrinth_autoregressive(model, grid, start, end, max_steps=40, device
         curr_pos_tensor = torch.tensor([curr_idx], dtype=torch.long, device=device)
 
         with torch.no_grad():
-            logits = model(grid_tensor, curr_pos_tensor).squeeze(0)  # [100]
+            logits = model(grid_tensor, curr_pos_tensor).squeeze(0)
             probs = torch.softmax(logits, dim=-1)
 
-        # Filter neighbors
         r, c = curr_pos
         neighbors = []
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nr, nc = r + dr, c + dc
             if 0 <= nr < height and 0 <= nc < width:
-                if grid[nr][nc] in (0, 1, 2):  # Walkable
+                if grid[nr][nc] in (0, 1, 2):
                     neighbors.append((nr, nc))
 
         if not neighbors:
             break
 
-        # Score neighbors using model probabilities
         best_neighbor = None
         best_prob = -1.0
 
         for nr, nc in neighbors:
             n_idx = nr * 10 + nc
             prob = probs[n_idx].item()
-            # To prevent simple loops, we slightly penalize already visited neighbors
             if (nr, nc) in visited:
                 prob *= 0.01
             if prob > best_prob:

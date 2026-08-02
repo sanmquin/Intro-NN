@@ -11,10 +11,9 @@ from labys.solver import (
 
 class TestLabyrinthSolver(unittest.TestCase):
     def setUp(self):
-        # Generate a standard labyrinth for testing
         self.start = (0, 0)
         self.end = (9, 9)
-        self.grid = generate_labyrinth(width=10, height=10, start=self.start, end=self.end, num_extra_paths=10)
+        self.grid = generate_labyrinth(width=10, height=10, start=self.start, end=self.end, num_loops=6)
 
     def test_labyrinth_boundaries_and_values(self):
         # Grid must be 10x10
@@ -30,6 +29,18 @@ class TestLabyrinthSolver(unittest.TestCase):
         # Start and end positions must be labeled 1 and 2 respectively
         self.assertEqual(self.grid[self.start[0]][self.start[1]], 1)
         self.assertEqual(self.grid[self.end[0]][self.end[1]], 2)
+
+    def test_labyrinth_non_trivial_sparseness(self):
+        # A non-trivial labyrinth shouldn't be "full of zeros".
+        # Walkable cells (0, 1, 2) should be less than or equal to 60% of the 100 cells.
+        walkable_count = 0
+        for r in range(10):
+            for c in range(10):
+                if self.grid[r][c] in (0, 1, 2):
+                    walkable_count += 1
+
+        self.assertLessEqual(walkable_count, 60, f"Labyrinth is too trivial, has too many path cells: {walkable_count}")
+        self.assertGreaterEqual(walkable_count, 10, f"Labyrinth is too sparse, has too few path cells: {walkable_count}")
 
     def test_edge_randomization(self):
         # Any wall cell adjacent to a path cell (0, 1, or 2) in orth/diag direction is an edge.
