@@ -13,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Import solver functions from labys.solver
-from labys.solver import generate_labyrinth, solve_bfs
+from labys.solver import generate_labyrinth, solve_bfs, analyze_labyrinth
 
 # ---------------------------------------------------------
 # 1. Model Architectures
@@ -92,7 +92,7 @@ class LabyrinthTransformer(nn.Module):
         return logits
 
 # ---------------------------------------------------------
-# 2. Data Generation and Partial Visibility Logic
+# 2. Partial Visibility & Datasets
 # ---------------------------------------------------------
 
 def get_partial_visibility_grid(true_grid, visited_positions, start=(0, 0), end=(9, 9)):
@@ -152,199 +152,8 @@ class SolverDataset(Dataset):
             torch.tensor(next_pos, dtype=torch.long)
         )
 
-
-def generate_all_datasets(num_labyrinths=310, train_ratio=0.677, seed=42):
-    """
-    Generates training/validation datasets of transitions from multiple random labyrinths.
-    Each labyrinth is filtered to be strictly sparse and non-trivial (walkable cells between 10 and 60).
-    With num_labyrinths=310 and train_ratio=0.677, we get:
-      - 209 train labyrinths (to train very fast on CPU)
-      - 101 test labyrinths (strictly fulfilling the requirement of testing on at least 100 labyrinths)
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    all_labyrinths = []
-    success_count = 0
-    attempts = 0
-
-    print("Generating and filtering labyrinths...")
-    while success_count < num_labyrinths and attempts < num_labyrinths * 100:
-        attempts += 1
-        start = (random.randint(0, 2), random.randint(0, 2))
-        end = (random.randint(7, 9), random.randint(7, 9))
-
-        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_loops=random.randint(4, 7))
-
-        # Check sparseness bounds (must have between 10 and 60 walkable cells)
-        walkable_count = sum(1 for r in range(10) for c in range(10) if grid[r][c] in (0, 1, 2))
-        if walkable_count < 10 or walkable_count > 60:
-            continue
-
-        path = solve_bfs(grid, start=start, end=end)
-        if path and len(path) > 1:
-            all_labyrinths.append((grid, path, start, end))
-            success_count += 1
-
-    print(f"Total labyrinths generated: {success_count} (out of {attempts} attempts)")
-
-    split_idx = int(num_labyrinths * train_ratio)
-    train_labyrinths = all_labyrinths[:split_idx]
-    val_labyrinths = all_labyrinths[split_idx:]
-
-    def build_samples(labyrinths_list):
-        recon_data = []
-        modular_solver_data = []
-        monolithic_solver_data = []
-
-        for grid, path, start, end in labyrinths_list:
-            flat_true_grid = [grid[r][c] for r in range(10) for c in range(10)]
-
-            for t in range(len(path) - 1):
-                curr_pos = path[t]
-                next_pos = path[t+1]
-
-                curr_idx = curr_pos[0] * 10 + curr_pos[1]
-                next_idx = next_pos[0] * 10 + next_pos[1]
-
-                visited_positions = path[:t+1]
-                partial_grid = get_partial_visibility_grid(flat_true_grid, visited_positions, start, end)
-
-                recon_data.append((partial_grid, flat_true_grid))
-                modular_solver_data.append((flat_true_grid, curr_idx, next_idx))
-                monolithic_solver_data.append((partial_grid, curr_idx, next_idx))
-
-        return recon_data, modular_solver_data, monolithic_solver_data
-
-    train_recon, train_mod, train_mono = build_samples(train_labyrinths)
-    val_recon, val_mod, val_mono = build_samples(val_labyrinths)
-
-    # Convert to PyTorch Datasets
-    train_recon_ds = ReconstructorDataset(train_recon)
-    val_recon_ds = ReconstructorDataset(val_recon)
-
-    train_mod_ds = SolverDataset(train_mod)
-    val_mod_ds = SolverDataset(val_mod)
-
-    train_mono_ds = SolverDataset(train_mono)
-    val_mono_ds = SolverDataset(val_mono)
-
-    return (
-        (train_recon_ds, val_recon_ds),
-        (train_mod_ds, val_mod_ds),
-        (train_mono_ds, val_mono_ds),
-        val_labyrinths  # To be used for full navigation inference testing
-    )
-
 # ---------------------------------------------------------
-# 3. Model Training Functions
-# ---------------------------------------------------------
-
-def train_reconstructor_model(model, train_loader, val_loader, epochs=10, lr=1e-3, device='cpu'):
-    model.to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss()
-
-    train_losses = []
-    val_losses = []
-
-    print("Training Reconstructor Model...")
-    for epoch in range(1, epochs + 1):
-        model.train()
-        total_train_loss = 0
-        total_pixels = 0
-
-        for partial_grids, true_grids in train_loader:
-            partial_grids, true_grids = partial_grids.to(device), true_grids.to(device)
-
-            optimizer.zero_grad()
-            logits = model(partial_grids) # shape (B, 100, 10)
-
-            loss = criterion(logits.view(-1, 10), true_grids.view(-1))
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item() * partial_grids.size(0)
-            total_pixels += partial_grids.size(0)
-
-        train_loss = total_train_loss / total_pixels
-        train_losses.append(train_loss)
-
-        # Validation
-        model.eval()
-        total_val_loss = 0
-        total_val_pixels = 0
-        with torch.no_grad():
-            for partial_grids, true_grids in val_loader:
-                partial_grids, true_grids = partial_grids.to(device), true_grids.to(device)
-                logits = model(partial_grids)
-                loss = criterion(logits.view(-1, 10), true_grids.view(-1))
-
-                total_val_loss += loss.item() * partial_grids.size(0)
-                total_val_pixels += partial_grids.size(0)
-
-        val_loss = total_val_loss / total_val_pixels
-        val_losses.append(val_loss)
-
-        if epoch % 5 == 0 or epoch == 1:
-            print(f"Reconstructor Epoch {epoch:02d}/{epochs:02d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-
-    return train_losses, val_losses
-
-
-def train_solver_model(model, train_loader, val_loader, model_name="Solver", epochs=10, lr=1e-3, device='cpu'):
-    model.to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    criterion = nn.CrossEntropyLoss()
-
-    train_losses = []
-    val_losses = []
-
-    print(f"Training {model_name} Model...")
-    for epoch in range(1, epochs + 1):
-        model.train()
-        total_train_loss = 0
-        total_samples = 0
-
-        for grids, curr_poss, targets in train_loader:
-            grids, curr_poss, targets = grids.to(device), curr_poss.to(device), targets.to(device)
-
-            optimizer.zero_grad()
-            logits = model(grids, curr_poss)
-            loss = criterion(logits, targets)
-            loss.backward()
-            optimizer.step()
-
-            total_train_loss += loss.item() * grids.size(0)
-            total_samples += grids.size(0)
-
-        train_loss = total_train_loss / total_samples
-        train_losses.append(train_loss)
-
-        # Validation
-        model.eval()
-        total_val_loss = 0
-        total_val_samples = 0
-        with torch.no_grad():
-            for grids, curr_poss, targets in val_loader:
-                grids, curr_poss, targets = grids.to(device), curr_poss.to(device), targets.to(device)
-                logits = model(grids, curr_poss)
-                loss = criterion(logits, targets)
-
-                total_val_loss += loss.item() * grids.size(0)
-                total_val_samples += grids.size(0)
-
-        val_loss = total_val_loss / total_val_samples
-        val_losses.append(val_loss)
-
-        if epoch % 5 == 0 or epoch == 1:
-            print(f"{model_name} Epoch {epoch:02d}/{epochs:02d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
-
-    return train_losses, val_losses
-
-# ---------------------------------------------------------
-# 4. Autoregressive Solvers (Inference)
+# 3. Autoregressive Navigation Solvers
 # ---------------------------------------------------------
 
 def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, end, max_steps=40, device='cpu'):
@@ -362,14 +171,13 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
         if curr_pos == end:
             break
 
-        # Get current visibility grid
         g_partial = get_partial_visibility_grid(flat_true_grid, path, start, end)
         g_partial_t = torch.tensor([g_partial], dtype=torch.long, device=device)
 
         with torch.no_grad():
             # 1. Reconstruction step
-            recon_logits = recon_model(g_partial_t) # shape (1, 100, 10)
-            recon_grid = torch.argmax(recon_logits, dim=-1) # shape (1, 100)
+            recon_logits = recon_model(g_partial_t)
+            recon_grid = torch.argmax(recon_logits, dim=-1)
 
             # Compute reconstruction accuracy
             correct_cells = (recon_grid.squeeze(0) == torch.tensor(flat_true_grid, device=device)).sum().item()
@@ -399,7 +207,7 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
             n_idx = nr * 10 + nc
             prob = probs[n_idx].item()
             if (nr, nc) in visited:
-                prob *= 0.01  # Penalty for visiting already visited cells
+                prob *= 0.01
             if prob > best_prob:
                 best_prob = prob
                 best_neighbor = (nr, nc)
@@ -426,7 +234,6 @@ def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps
         if curr_pos == end:
             break
 
-        # Get current visibility grid
         g_partial = get_partial_visibility_grid(flat_true_grid, path, start, end)
         g_partial_t = torch.tensor([g_partial], dtype=torch.long, device=device)
 
@@ -454,7 +261,7 @@ def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps
             n_idx = nr * 10 + nc
             prob = probs[n_idx].item()
             if (nr, nc) in visited:
-                prob *= 0.01  # Penalty for visiting already visited cells
+                prob *= 0.01
             if prob > best_prob:
                 best_prob = prob
                 best_neighbor = (nr, nc)
@@ -469,168 +276,242 @@ def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps
     return path
 
 # ---------------------------------------------------------
-# 5. Core Experiment Execution Runner
+# 4. Core Experiment Runner
 # ---------------------------------------------------------
 
-def run_experiment(epochs=10, lr=1e-3):
+def run_experiment(epochs=15, lr=1e-3):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Executing experiment on device: {device}")
 
-    # 1. Generate full dataset (310 labyrinths: 209 train, 101 test)
-    recon_ds, mod_ds, mono_ds, test_labyrinths = generate_all_datasets(num_labyrinths=310, train_ratio=0.677, seed=42)
+    # Generate 100 non-trivial labyrinths with explicit choice points and dead ends
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
 
-    # Dataloaders - large batch size (128) to run extremely fast on CPU
-    train_recon_loader = DataLoader(recon_ds[0], batch_size=128, shuffle=True)
-    val_recon_loader = DataLoader(recon_ds[1], batch_size=128, shuffle=False)
+    labyrinths = []
+    print("Generating 100 labyrinths...")
+    for i in range(100):
+        start = (random.randint(0, 2), random.randint(0, 2))
+        end = (random.randint(7, 9), random.randint(7, 9))
+        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_dead_ends=2, num_loops=1)
+        path = solve_bfs(grid, start=start, end=end)
+        while not path or len(path) <= 1:
+            grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_dead_ends=2, num_loops=1)
+            path = solve_bfs(grid, start=start, end=end)
+        stats = analyze_labyrinth(grid)
+        labyrinths.append((grid, path, start, end, stats['difficulty']))
 
-    train_mod_loader = DataLoader(mod_ds[0], batch_size=128, shuffle=True)
-    val_mod_loader = DataLoader(mod_ds[1], batch_size=128, shuffle=False)
+    # Print difficulty counts
+    diff_counts = {'Easy': 0, 'Medium': 0, 'Hard': 0}
+    for _, _, _, _, diff in labyrinths:
+        diff_counts[diff] += 1
+    print(f"Difficulty counts in 100 generated mazes: {diff_counts}")
 
-    train_mono_loader = DataLoader(mono_ds[0], batch_size=128, shuffle=True)
-    val_mono_loader = DataLoader(mono_ds[1], batch_size=128, shuffle=False)
+    # Build datasets
+    recon_data = []
+    mod_data = []
+    mono_data = []
 
-    # 2. Instantiate models
+    for grid, path, start, end, diff in labyrinths:
+        flat_true_grid = [grid[r][c] for r in range(10) for c in range(10)]
+        for t in range(len(path) - 1):
+            curr_pos = path[t]
+            next_pos = path[t+1]
+            curr_idx = curr_pos[0] * 10 + curr_pos[1]
+            next_idx = next_pos[0] * 10 + next_pos[1]
+
+            visited = path[:t+1]
+            g_partial = get_partial_visibility_grid(flat_true_grid, visited, start, end)
+
+            recon_data.append((g_partial, flat_true_grid))
+            mod_data.append((flat_true_grid, curr_idx, next_idx))
+            mono_data.append((g_partial, curr_idx, next_idx))
+
+    train_recon_ds = ReconstructorDataset(recon_data)
+    train_mod_ds = SolverDataset(mod_data)
+    train_mono_ds = SolverDataset(mono_data)
+
+    train_recon_loader = DataLoader(train_recon_ds, batch_size=128, shuffle=True)
+    train_mod_loader = DataLoader(train_mod_ds, batch_size=128, shuffle=True)
+    train_mono_loader = DataLoader(train_mono_ds, batch_size=128, shuffle=True)
+
+    # Instantiate models
     reconstructor = LabyrinthReconstructor(embed_dim=32, num_heads=2, hidden_dim=64, num_layers=2)
     modular_solver = LabyrinthTransformer(embed_dim=32, num_heads=2, hidden_dim=64, num_layers=2)
     monolithic_solver = LabyrinthTransformer(embed_dim=32, num_heads=2, hidden_dim=64, num_layers=2)
 
-    # 3. Train models
-    recon_train_loss, recon_val_loss = train_reconstructor_model(reconstructor, train_recon_loader, val_recon_loader, epochs, lr, device)
-    mod_train_loss, mod_val_loss = train_solver_model(modular_solver, train_mod_loader, val_mod_loader, "Modular Solver", epochs, lr, device)
-    mono_train_loss, mono_val_loss = train_solver_model(monolithic_solver, train_mono_loader, val_mono_loader, "Monolithic Solver", epochs, lr, device)
+    # Train Reconstructor
+    print("Training Reconstructor...")
+    optimizer = optim.AdamW(reconstructor.parameters(), lr=lr, weight_decay=1e-4)
+    criterion = nn.CrossEntropyLoss()
+    recon_train_loss = []
+    for epoch in range(1, epochs + 1):
+        reconstructor.train()
+        total_loss = 0
+        for p, t in train_recon_loader:
+            p, t = p.to(device), t.to(device)
+            optimizer.zero_grad()
+            logits = reconstructor(p)
+            loss = criterion(logits.view(-1, 10), t.view(-1))
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * p.size(0)
+        recon_train_loss.append(total_loss / len(train_recon_ds))
+        if epoch % 5 == 0 or epoch == 1:
+            print(f"Reconstructor Epoch {epoch:02d}/{epochs:02d} | Train Loss: {recon_train_loss[-1]:.4f}")
 
-    # Save checkpoints
+    # Train Modular Solver
+    print("Training Modular Solver...")
+    optimizer = optim.AdamW(modular_solver.parameters(), lr=lr, weight_decay=1e-4)
+    criterion = nn.CrossEntropyLoss()
+    mod_train_loss = []
+    for epoch in range(1, epochs + 1):
+        modular_solver.train()
+        total_loss = 0
+        for g, p, t in train_mod_loader:
+            g, p, t = g.to(device), p.to(device), t.to(device)
+            optimizer.zero_grad()
+            logits = modular_solver(g, p)
+            loss = criterion(logits, t)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * g.size(0)
+        mod_train_loss.append(total_loss / len(train_mod_ds))
+        if epoch % 5 == 0 or epoch == 1:
+            print(f"Modular Solver Epoch {epoch:02d}/{epochs:02d} | Train Loss: {mod_train_loss[-1]:.4f}")
+
+    # Train Monolithic Solver
+    print("Training Monolithic Solver...")
+    optimizer = optim.AdamW(monolithic_solver.parameters(), lr=lr, weight_decay=1e-4)
+    criterion = nn.CrossEntropyLoss()
+    mono_train_loss = []
+    for epoch in range(1, epochs + 1):
+        monolithic_solver.train()
+        total_loss = 0
+        for g, p, t in train_mono_loader:
+            g, p, t = g.to(device), p.to(device), t.to(device)
+            optimizer.zero_grad()
+            logits = monolithic_solver(g, p)
+            loss = criterion(logits, t)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * g.size(0)
+        mono_train_loss.append(total_loss / len(train_mono_ds))
+        if epoch % 5 == 0 or epoch == 1:
+            print(f"Monolithic Solver Epoch {epoch:02d}/{epochs:02d} | Train Loss: {mono_train_loss[-1]:.4f}")
+
+    # Save Checkpoints
     os.makedirs("labs", exist_ok=True)
     torch.save(reconstructor.state_dict(), "labs/reconstructor.pt")
     torch.save(modular_solver.state_dict(), "labs/modular_solver.pt")
     torch.save(monolithic_solver.state_dict(), "labs/monolithic_solver.pt")
-    print("All model checkpoints saved successfully.")
+    print("All checkpoints saved.")
 
-    # 4. Perform comparative testing on 100 test labyrinths
-    print("\nStarting comparative evaluation on 100 test labyrinths...")
+    # Evaluation
+    print("\nStarting comparative evaluation on the same 100 memorized labyrinths under partial observability...")
 
-    modular_successes = 0
-    monolithic_successes = 0
+    results = {'Modular': [], 'Monolithic': []}
+    all_modular_accuracies = []
 
-    modular_path_efficiencies = []
-    monolithic_path_efficiencies = []
-
-    all_modular_accuracies = [] # lists of step accuracies
-
-    # Profiling latencies
-    modular_step_latencies = []
-    monolithic_step_latencies = []
-
-    for grid, opt_path, start, end in test_labyrinths:
+    for grid, opt_path, start, end, diff in labyrinths:
         opt_len = len(opt_path)
 
-        # A. Modular Architecture Navigation
-        t0 = time.time()
+        # 1. Modular Architecture
         mod_path, mod_accs = solve_autoregressive_modular(reconstructor, modular_solver, grid, start, end, max_steps=40, device=device)
-        t_elapsed = time.time() - t0
+        mod_success = 1 if mod_path[-1] == end else 0
+        mod_len = len(mod_path)
+        mod_eff = opt_len / mod_len if mod_success else 0.0
+        mod_missteps = sum(1 for c in mod_path if c not in opt_path)
+        mod_backtracks = mod_len - len(set(mod_path))
 
-        if len(mod_path) > 1:
-            modular_step_latencies.append(t_elapsed / (len(mod_path) - 1))
-
-        if mod_path[-1] == end:
-            modular_successes += 1
-            modular_path_efficiencies.append(opt_len / len(mod_path))
+        results['Modular'].append((mod_success, mod_eff, mod_missteps, mod_backtracks, diff))
+        if mod_success:
             all_modular_accuracies.append(mod_accs)
 
-        # B. Monolithic Architecture Navigation
-        t0 = time.time()
+        # 2. Monolithic Architecture
         mono_path = solve_autoregressive_monolithic(monolithic_solver, grid, start, end, max_steps=40, device=device)
-        t_elapsed = time.time() - t0
+        mono_success = 1 if mono_path[-1] == end else 0
+        mono_len = len(mono_path)
+        mono_eff = opt_len / mono_len if mono_success else 0.0
+        mono_missteps = sum(1 for c in mono_path if c not in opt_path)
+        mono_backtracks = mono_len - len(set(mono_path))
 
-        if len(mono_path) > 1:
-            monolithic_step_latencies.append(t_elapsed / (len(mono_path) - 1))
+        results['Monolithic'].append((mono_success, mono_eff, mono_missteps, mono_backtracks, diff))
 
-        if mono_path[-1] == end:
-            monolithic_successes += 1
-            monolithic_path_efficiencies.append(opt_len / len(mono_path))
+    # Print results summary
+    print("\n" + "="*60)
+    print("                EVALUATION METRICS SUMMARY")
+    print("="*60)
+    for arch in ['Modular', 'Monolithic']:
+        successes, effs, missteps, backtracks, _ = zip(*results[arch])
+        print(f"\n{arch} Architecture (Global):")
+        print(f"  - Success Rate:              {np.mean(successes)*100:.2f}%")
+        print(f"  - Average Path Efficiency:   {np.mean(effs)*100:.2f}%")
+        print(f"  - Avg Missteps Per Run:      {np.mean(missteps):.2f}")
+        print(f"  - Avg Backtracks Per Run:    {np.mean(backtracks):.2f}")
 
-    # Compile and average evaluation results
-    mod_success_rate = (modular_successes / len(test_labyrinths)) * 100.0
-    mono_success_rate = (monolithic_successes / len(test_labyrinths)) * 100.0
+        for d in ['Easy', 'Medium', 'Hard']:
+            d_sub = [results[arch][i] for i, x in enumerate(results[arch]) if x[4] == d]
+            if d_sub:
+                d_succs, d_effs, d_miss, d_back, _ = zip(*d_sub)
+                print(f"  [{d} Difficulty ({len(d_sub)} mazes)]:")
+                print(f"    - Success Rate:            {np.mean(d_succs)*100:.2f}%")
+                print(f"    - Average Path Efficiency: {np.mean(d_effs)*100:.2f}%")
+                print(f"    - Avg Missteps Per Run:    {np.mean(d_miss):.2f}")
+                print(f"    - Avg Backtracks Per Run:  {np.mean(d_back):.2f}")
+    print("="*60)
 
-    avg_mod_efficiency = np.mean(modular_path_efficiencies) * 100.0 if modular_path_efficiencies else 0.0
-    avg_mono_efficiency = np.mean(monolithic_path_efficiencies) * 100.0 if monolithic_path_efficiencies else 0.0
-
-    avg_mod_latency = np.mean(modular_step_latencies) * 1000.0 # to ms
-    avg_mono_latency = np.mean(monolithic_step_latencies) * 1000.0 # to ms
-
-    # Trainable parameter counts
-    reconstructor_params = sum(p.numel() for p in reconstructor.parameters() if p.requires_grad)
-    modular_solver_params = sum(p.numel() for p in modular_solver.parameters() if p.requires_grad)
-    monolithic_solver_params = sum(p.numel() for p in monolithic_solver.parameters() if p.requires_grad)
-
-    print("\n" + "="*50)
-    print("           EXPERIMENT RESULTS SUMMARY           ")
-    print("="*50)
-    print(f"Labyrinths Evaluated:          {len(test_labyrinths)}")
-    print("-"*50)
-    print(f"Modular Architecture:")
-    print(f"  - Reconstructor Parameters:  {reconstructor_params:,}")
-    print(f"  - Solver Parameters:         {modular_solver_params:,}")
-    print(f"  - Total Parameters:          {(reconstructor_params + modular_solver_params):,}")
-    print(f"  - Success Rate:              {mod_success_rate:.2f}%")
-    print(f"  - Average Path Efficiency:   {avg_mod_efficiency:.2f}%")
-    print(f"  - Avg Latency Per Step:      {avg_mod_latency:.3f} ms")
-    print("-"*50)
-    print(f"Monolithic Architecture:")
-    print(f"  - Total Parameters:          {monolithic_solver_params:,}")
-    print(f"  - Success Rate:              {mono_success_rate:.2f}%")
-    print(f"  - Average Path Efficiency:   {avg_mono_efficiency:.2f}%")
-    print(f"  - Avg Latency Per Step:      {avg_mono_latency:.3f} ms")
-    print("="*50)
-
-    # ---------------------------------------------------------
-    # 6. Comparative Chart Generation
-    # ---------------------------------------------------------
+    # Save updated comparison charts
     os.makedirs("charts", exist_ok=True)
 
-    # Chart A: Training Loss Trajectories
+    # Plot A: Loss Curves
     plt.figure(figsize=(10, 5))
-    plt.plot(recon_train_loss, label="Reconstructor Train Loss", color='blue', linestyle='-')
-    plt.plot(recon_val_loss, label="Reconstructor Val Loss", color='blue', linestyle='--')
-    plt.plot(mod_train_loss, label="Modular Solver Train Loss", color='green', linestyle='-')
-    plt.plot(mod_val_loss, label="Modular Solver Val Loss", color='green', linestyle='--')
-    plt.plot(mono_train_loss, label="Monolithic Solver Train Loss", color='red', linestyle='-')
-    plt.plot(mono_val_loss, label="Monolithic Solver Val Loss", color='red', linestyle='--')
-    plt.title("Model Training Loss Curves (10 Epochs)", fontsize=14, weight='bold')
+    plt.plot(recon_train_loss, label="Reconstructor Train Loss", color='blue')
+    plt.plot(mod_train_loss, label="Modular Solver Train Loss", color='green')
+    plt.plot(mono_train_loss, label="Monolithic Solver Train Loss", color='red')
+    plt.title("Labyrinth Model Training Loss Curves", fontsize=14, weight='bold')
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("Loss", fontsize=12)
-    plt.legend(fontsize=10)
+    plt.legend()
     plt.grid(True, linestyle=':', alpha=0.6)
     plt.tight_layout()
     plt.savefig("charts/architecture_loss_comparison.png", dpi=150)
     plt.close()
 
-    # Chart B: Metrics Bar Chart Comparison
-    labels = ['Success Rate (%)', 'Path Efficiency (%)', 'Parameters (x100k)', 'Step Latency (ms)']
-    modular_metrics = [mod_success_rate, avg_mod_efficiency, (reconstructor_params + modular_solver_params)/100000.0, avg_mod_latency]
-    monolithic_metrics = [mono_success_rate, avg_mono_efficiency, monolithic_solver_params/100000.0, avg_mono_latency]
+    # Plot B: Performance Metrics Chart
+    mod_success_rate = np.mean([x[0] for x in results['Modular']]) * 100
+    mono_success_rate = np.mean([x[0] for x in results['Monolithic']]) * 100
+    avg_mod_efficiency = np.mean([x[1] for x in results['Modular']]) * 100
+    avg_mono_efficiency = np.mean([x[1] for x in results['Monolithic']]) * 100
+    avg_mod_missteps = np.mean([x[2] for x in results['Modular']])
+    avg_mono_missteps = np.mean([x[2] for x in results['Monolithic']])
+    avg_mod_backtracks = np.mean([x[3] for x in results['Modular']])
+    avg_mono_backtracks = np.mean([x[3] for x in results['Monolithic']])
+
+    labels = ['Success (%)', 'Path Efficiency (%)', 'Avg Missteps', 'Avg Backtracks']
+    mod_vals = [mod_success_rate, avg_mod_efficiency, avg_mod_missteps, avg_mod_backtracks]
+    mono_vals = [mono_success_rate, avg_mono_efficiency, avg_mono_missteps, avg_mono_backtracks]
 
     x = np.arange(len(labels))
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    rects1 = ax.bar(x - width/2, modular_metrics, width, label='Modular Architecture', color='teal')
-    rects2 = ax.bar(x + width/2, monolithic_metrics, width, label='Monolithic Architecture', color='crimson')
+    rects1 = ax.bar(x - width/2, mod_vals, width, label='Modular Architecture', color='teal')
+    rects2 = ax.bar(x + width/2, mono_vals, width, label='Monolithic Architecture', color='crimson')
 
     ax.set_ylabel('Metric Values', fontsize=12)
-    ax.set_title('Modular vs Monolithic Performance & Cost Comparison', fontsize=14, weight='bold')
+    ax.set_title('Modular vs Monolithic Performance under Partial Observability', fontsize=14, weight='bold')
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=11)
-    ax.legend(fontsize=11)
+    ax.legend()
     ax.grid(True, linestyle=':', alpha=0.5)
 
     def autolabel(rects):
         for rect in rects:
             height = rect.get_height()
-            ax.annotate(f'{height:.2f}',
+            ax.annotate(f'{height:.1f}',
                         xy=(rect.get_x() + rect.get_width() / 2, height),
-                        xytext=(0, 3),  # 3 points vertical offset
+                        xytext=(0, 3),
                         textcoords="offset points",
                         ha='center', va='bottom', fontsize=9)
 
@@ -640,8 +521,7 @@ def run_experiment(epochs=10, lr=1e-3):
     plt.savefig("charts/architecture_cost_metrics.png", dpi=150)
     plt.close()
 
-    # Chart C: Reconstruction Accuracy Over Step-by-Step Navigation
-    # Since different labyrinths have different step counts, we align them by step index
+    # Plot C: Reconstruction Accuracy Over Step Index
     max_steps_tested = max(len(acc) for acc in all_modular_accuracies) if all_modular_accuracies else 0
     accuracy_by_step = [[] for _ in range(max_steps_tested)]
     for acc_list in all_modular_accuracies:
@@ -660,9 +540,7 @@ def run_experiment(epochs=10, lr=1e-3):
     plt.savefig("charts/reconstruction_accuracy_trajectory.png", dpi=150)
     plt.close()
 
-    print("Comparative charts generated and saved successfully under 'charts/' directory.")
-
+    print("Comparative charts generated and saved under 'charts/'.")
 
 if __name__ == "__main__":
-    # If executed directly, run the complete experiment
-    run_experiment(epochs=10, lr=1e-3)
+    run_experiment(epochs=15, lr=1e-3)
