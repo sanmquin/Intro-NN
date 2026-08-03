@@ -1,5 +1,6 @@
 import unittest
 import torch
+import random
 from labys.solver import (
     generate_labyrinth,
     solve_bfs,
@@ -11,6 +12,7 @@ from labys.solver import (
 
 class TestLabyrinthSolver(unittest.TestCase):
     def setUp(self):
+        random.seed(42)
         self.start = (0, 0)
         self.end = (9, 9)
         self.grid = generate_labyrinth(width=10, height=10, start=self.start, end=self.end, num_loops=6)
