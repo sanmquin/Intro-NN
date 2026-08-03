@@ -279,7 +279,7 @@ def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps
 # 4. Core Experiment Runner
 # ---------------------------------------------------------
 
-def run_experiment(epochs=15, lr=1e-3):
+def run_experiment(epochs=40, lr=1e-3):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Executing experiment on device: {device}")
 
@@ -289,7 +289,9 @@ def run_experiment(epochs=15, lr=1e-3):
     torch.manual_seed(42)
 
     labyrinths = []
-    print("Generating 100 labyrinths...")
+    print("--------------------------------------------------")
+    print("STEP 1: Generating 100 Labyrinths for Associative Memorization")
+    print("--------------------------------------------------")
     for i in range(100):
         start = (random.randint(0, 2), random.randint(0, 2))
         end = (random.randint(7, 9), random.randint(7, 9))
@@ -305,7 +307,10 @@ def run_experiment(epochs=15, lr=1e-3):
     diff_counts = {'Easy': 0, 'Medium': 0, 'Hard': 0}
     for _, _, _, _, diff in labyrinths:
         diff_counts[diff] += 1
-    print(f"Difficulty counts in 100 generated mazes: {diff_counts}")
+    print(f"Labyrinth Generation Complete! Difficulty breakdown:")
+    for k, v in diff_counts.items():
+        print(f"  - {k} Difficulty: {v} mazes")
+    print("--------------------------------------------------\n")
 
     # Build datasets
     recon_data = []
@@ -341,7 +346,9 @@ def run_experiment(epochs=15, lr=1e-3):
     monolithic_solver = LabyrinthTransformer(embed_dim=32, num_heads=2, hidden_dim=64, num_layers=2)
 
     # Train Reconstructor
-    print("Training Reconstructor...")
+    print("--------------------------------------------------")
+    print("STEP 2: Training Reconstructor (CA3 Attractor Network)")
+    print("--------------------------------------------------")
     optimizer = optim.AdamW(reconstructor.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     recon_train_loss = []
@@ -356,12 +363,15 @@ def run_experiment(epochs=15, lr=1e-3):
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * p.size(0)
-        recon_train_loss.append(total_loss / len(train_recon_ds))
+        epoch_loss = total_loss / len(train_recon_ds)
+        recon_train_loss.append(epoch_loss)
         if epoch % 5 == 0 or epoch == 1:
-            print(f"Reconstructor Epoch {epoch:02d}/{epochs:02d} | Train Loss: {recon_train_loss[-1]:.4f}")
+            print(f"  [Reconstructor] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Train Modular Solver
-    print("Training Modular Solver...")
+    print("\n--------------------------------------------------")
+    print("STEP 3: Training Modular Solver (CA1 Directional Planning)")
+    print("--------------------------------------------------")
     optimizer = optim.AdamW(modular_solver.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     mod_train_loss = []
@@ -376,12 +386,15 @@ def run_experiment(epochs=15, lr=1e-3):
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * g.size(0)
-        mod_train_loss.append(total_loss / len(train_mod_ds))
+        epoch_loss = total_loss / len(train_mod_ds)
+        mod_train_loss.append(epoch_loss)
         if epoch % 5 == 0 or epoch == 1:
-            print(f"Modular Solver Epoch {epoch:02d}/{epochs:02d} | Train Loss: {mod_train_loss[-1]:.4f}")
+            print(f"  [Modular Solver] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Train Monolithic Solver
-    print("Training Monolithic Solver...")
+    print("\n--------------------------------------------------")
+    print("STEP 4: Training Monolithic Solver (Direct Sensorimotor Map)")
+    print("--------------------------------------------------")
     optimizer = optim.AdamW(monolithic_solver.parameters(), lr=lr, weight_decay=1e-4)
     criterion = nn.CrossEntropyLoss()
     mono_train_loss = []
@@ -396,24 +409,28 @@ def run_experiment(epochs=15, lr=1e-3):
             loss.backward()
             optimizer.step()
             total_loss += loss.item() * g.size(0)
-        mono_train_loss.append(total_loss / len(train_mono_ds))
+        epoch_loss = total_loss / len(train_mono_ds)
+        mono_train_loss.append(epoch_loss)
         if epoch % 5 == 0 or epoch == 1:
-            print(f"Monolithic Solver Epoch {epoch:02d}/{epochs:02d} | Train Loss: {mono_train_loss[-1]:.4f}")
+            print(f"  [Monolithic Solver] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Save Checkpoints
     os.makedirs("labs", exist_ok=True)
     torch.save(reconstructor.state_dict(), "labs/reconstructor.pt")
     torch.save(modular_solver.state_dict(), "labs/modular_solver.pt")
     torch.save(monolithic_solver.state_dict(), "labs/monolithic_solver.pt")
-    print("All checkpoints saved.")
+    print("\nAll model checkpoints successfully saved in 'labs/'.")
 
     # Evaluation
-    print("\nStarting comparative evaluation on the same 100 memorized labyrinths under partial observability...")
+    print("\n--------------------------------------------------")
+    print("STEP 5: Executing Comparative Evaluation Under Partial Observability")
+    print("--------------------------------------------------")
+    print("Testing started on all 100 memorized environments step-by-step...\n")
 
     results = {'Modular': [], 'Monolithic': []}
     all_modular_accuracies = []
 
-    for grid, opt_path, start, end, diff in labyrinths:
+    for idx, (grid, opt_path, start, end, diff) in enumerate(labyrinths):
         opt_len = len(opt_path)
 
         # 1. Modular Architecture
@@ -438,13 +455,17 @@ def run_experiment(epochs=15, lr=1e-3):
 
         results['Monolithic'].append((mono_success, mono_eff, mono_missteps, mono_backtracks, diff))
 
+        # Printing individual exploration logs for visibility
+        if (idx + 1) % 10 == 0 or idx == 0:
+            print(f"  Maze #{idx+1:03d} ({diff:6s}) | Opt Path: {opt_len:2d} | Modular: Succ={mod_success}, Steps={mod_len:2d}, Backtracks={mod_backtracks:2d} | Monolithic: Succ={mono_success}, Steps={mono_len:2d}, Backtracks={mono_backtracks:2d}")
+
     # Print results summary
-    print("\n" + "="*60)
-    print("                EVALUATION METRICS SUMMARY")
-    print("="*60)
+    print("\n" + "="*65)
+    print("               EVALUATION METRICS SUMMARY & DIFFICULTY ANALYSIS")
+    print("="*65)
     for arch in ['Modular', 'Monolithic']:
         successes, effs, missteps, backtracks, _ = zip(*results[arch])
-        print(f"\n{arch} Architecture (Global):")
+        print(f"\n{arch} Architecture (Global Metrics across all 100 mazes):")
         print(f"  - Success Rate:              {np.mean(successes)*100:.2f}%")
         print(f"  - Average Path Efficiency:   {np.mean(effs)*100:.2f}%")
         print(f"  - Avg Missteps Per Run:      {np.mean(missteps):.2f}")
@@ -459,26 +480,26 @@ def run_experiment(epochs=15, lr=1e-3):
                 print(f"    - Average Path Efficiency: {np.mean(d_effs)*100:.2f}%")
                 print(f"    - Avg Missteps Per Run:    {np.mean(d_miss):.2f}")
                 print(f"    - Avg Backtracks Per Run:  {np.mean(d_back):.2f}")
-    print("="*60)
+    print("="*65 + "\n")
 
     # Save updated comparison charts
     os.makedirs("charts", exist_ok=True)
 
-    # Plot A: Loss Curves
+    # 1. Loss Curves
     plt.figure(figsize=(10, 5))
-    plt.plot(recon_train_loss, label="Reconstructor Train Loss", color='blue')
-    plt.plot(mod_train_loss, label="Modular Solver Train Loss", color='green')
-    plt.plot(mono_train_loss, label="Monolithic Solver Train Loss", color='red')
-    plt.title("Labyrinth Model Training Loss Curves", fontsize=14, weight='bold')
+    plt.plot(recon_train_loss, label="Reconstructor Train Loss", color='blue', linewidth=2)
+    plt.plot(mod_train_loss, label="Modular Solver Train Loss", color='green', linewidth=2)
+    plt.plot(mono_train_loss, label="Monolithic Solver Train Loss", color='red', linewidth=2)
+    plt.title("Labyrinth Model Training Loss Curves (40 Epochs)", fontsize=14, weight='bold')
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("Loss", fontsize=12)
-    plt.legend()
+    plt.legend(fontsize=10)
     plt.grid(True, linestyle=':', alpha=0.6)
     plt.tight_layout()
     plt.savefig("charts/architecture_loss_comparison.png", dpi=150)
     plt.close()
 
-    # Plot B: Performance Metrics Chart
+    # 2. Global Performance Metrics Chart
     mod_success_rate = np.mean([x[0] for x in results['Modular']]) * 100
     mono_success_rate = np.mean([x[0] for x in results['Monolithic']]) * 100
     avg_mod_efficiency = np.mean([x[1] for x in results['Modular']]) * 100
@@ -521,7 +542,57 @@ def run_experiment(epochs=15, lr=1e-3):
     plt.savefig("charts/architecture_cost_metrics.png", dpi=150)
     plt.close()
 
-    # Plot C: Reconstruction Accuracy Over Step Index
+    # 3. Difficulty-Wise Success Rate Comparison
+    difficulties = ['Easy', 'Medium', 'Hard']
+    mod_diff_success = []
+    mono_diff_success = []
+    for d in difficulties:
+        m_sub = [x[0] for x in results['Modular'] if x[4] == d]
+        mo_sub = [x[0] for x in results['Monolithic'] if x[4] == d]
+        mod_diff_success.append(np.mean(m_sub)*100 if m_sub else 0)
+        mono_diff_success.append(np.mean(mo_sub)*100 if mo_sub else 0)
+
+    x = np.arange(len(difficulties))
+    fig, ax = plt.subplots(figsize=(8, 5))
+    rects1 = ax.bar(x - width/2, mod_diff_success, width, label='Modular Architecture', color='teal')
+    rects2 = ax.bar(x + width/2, mono_diff_success, width, label='Monolithic Architecture', color='crimson')
+    ax.set_ylabel('Success Rate (%)', fontsize=12)
+    ax.set_title('Success Rate Comparison by Labyrinth Difficulty', fontsize=13, weight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(difficulties, fontsize=11)
+    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.5)
+    autolabel(rects1)
+    autolabel(rects2)
+    fig.tight_layout()
+    plt.savefig("charts/difficulty_success_comparison.png", dpi=150)
+    plt.close()
+
+    # 4. Difficulty-Wise Path Efficiency Comparison
+    mod_diff_eff = []
+    mono_diff_eff = []
+    for d in difficulties:
+        m_sub = [x[1] for x in results['Modular'] if x[4] == d]
+        mo_sub = [x[1] for x in results['Monolithic'] if x[4] == d]
+        mod_diff_eff.append(np.mean(m_sub)*100 if m_sub else 0)
+        mono_diff_eff.append(np.mean(mo_sub)*100 if mo_sub else 0)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    rects1 = ax.bar(x - width/2, mod_diff_eff, width, label='Modular Architecture', color='teal')
+    rects2 = ax.bar(x + width/2, mono_diff_eff, width, label='Monolithic Architecture', color='crimson')
+    ax.set_ylabel('Average Path Efficiency (%)', fontsize=12)
+    ax.set_title('Path Efficiency Comparison by Labyrinth Difficulty', fontsize=13, weight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(difficulties, fontsize=11)
+    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.5)
+    autolabel(rects1)
+    autolabel(rects2)
+    fig.tight_layout()
+    plt.savefig("charts/difficulty_efficiency_comparison.png", dpi=150)
+    plt.close()
+
+    # 5. Reconstruction Accuracy Over Step Index
     max_steps_tested = max(len(acc) for acc in all_modular_accuracies) if all_modular_accuracies else 0
     accuracy_by_step = [[] for _ in range(max_steps_tested)]
     for acc_list in all_modular_accuracies:
@@ -540,7 +611,7 @@ def run_experiment(epochs=15, lr=1e-3):
     plt.savefig("charts/reconstruction_accuracy_trajectory.png", dpi=150)
     plt.close()
 
-    print("Comparative charts generated and saved under 'charts/'.")
+    print("All updated comparative charts successfully generated and saved under 'charts/'.")
 
 if __name__ == "__main__":
-    run_experiment(epochs=15, lr=1e-3)
+    run_experiment(epochs=40, lr=1e-3)
