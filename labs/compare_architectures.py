@@ -156,14 +156,24 @@ class SolverDataset(Dataset):
 # 3. Autoregressive Navigation Solvers
 # ---------------------------------------------------------
 
-def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, end, max_steps=40, device='cpu'):
+def solve_autoregressive_modular(recon_model, solver_model, grid_raw, start, end, max_steps=40, device='cpu'):
     recon_model.eval()
     solver_model.eval()
 
     visited = {start}
     path = [start]
     curr_pos = start
-    flat_true_grid = [grid_true[r][c] for r in range(10) for c in range(10)]
+
+    # We construct grid_test where start_test is 1 and end_test is 2
+    grid_test = [row[:] for row in grid_raw]
+    for r in range(10):
+        for c in range(10):
+            if grid_test[r][c] in (1, 2):
+                grid_test[r][c] = 0
+    grid_test[start[0]][start[1]] = 1
+    grid_test[end[0]][end[1]] = 2
+
+    flat_test_grid = [grid_test[r][c] for r in range(10) for c in range(10)]
 
     step_reconstructed_accuracies = []
 
@@ -171,7 +181,7 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
         if curr_pos == end:
             break
 
-        g_partial = get_partial_visibility_grid(flat_true_grid, path, start, end)
+        g_partial = get_partial_visibility_grid(flat_test_grid, path, start, end)
         g_partial_t = torch.tensor([g_partial], dtype=torch.long, device=device)
 
         with torch.no_grad():
@@ -179,8 +189,15 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
             recon_logits = recon_model(g_partial_t)
             recon_grid = torch.argmax(recon_logits, dim=-1)
 
+            # Adjust reconstructed start and end to the test pair
+            for idx in range(100):
+                if flat_test_grid[idx] in (0, 1, 2):
+                    recon_grid[0, idx] = 0
+            recon_grid[0, start[0]*10 + start[1]] = 1
+            recon_grid[0, end[0]*10 + end[1]] = 2
+
             # Compute reconstruction accuracy
-            correct_cells = (recon_grid.squeeze(0) == torch.tensor(flat_true_grid, device=device)).sum().item()
+            correct_cells = (recon_grid.squeeze(0) == torch.tensor(flat_test_grid, device=device)).sum().item()
             step_reconstructed_accuracies.append(correct_cells / 100.0)
 
             # 2. Solver step
@@ -195,7 +212,7 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nr, nc = r + dr, c + dc
             if 0 <= nr < 10 and 0 <= nc < 10:
-                if grid_true[nr][nc] in (0, 1, 2):
+                if grid_test[nr][nc] in (0, 1, 2):
                     neighbors.append((nr, nc))
 
         if not neighbors:
@@ -222,19 +239,29 @@ def solve_autoregressive_modular(recon_model, solver_model, grid_true, start, en
     return path, step_reconstructed_accuracies
 
 
-def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps=40, device='cpu'):
+def solve_autoregressive_monolithic(mono_model, grid_raw, start, end, max_steps=40, device='cpu'):
     mono_model.eval()
 
     visited = {start}
     path = [start]
     curr_pos = start
-    flat_true_grid = [grid_true[r][c] for r in range(10) for c in range(10)]
+
+    # We construct grid_test where start_test is 1 and end_test is 2
+    grid_test = [row[:] for row in grid_raw]
+    for r in range(10):
+        for c in range(10):
+            if grid_test[r][c] in (1, 2):
+                grid_test[r][c] = 0
+    grid_test[start[0]][start[1]] = 1
+    grid_test[end[0]][end[1]] = 2
+
+    flat_test_grid = [grid_test[r][c] for r in range(10) for c in range(10)]
 
     for step in range(max_steps):
         if curr_pos == end:
             break
 
-        g_partial = get_partial_visibility_grid(flat_true_grid, path, start, end)
+        g_partial = get_partial_visibility_grid(flat_test_grid, path, start, end)
         g_partial_t = torch.tensor([g_partial], dtype=torch.long, device=device)
 
         with torch.no_grad():
@@ -249,7 +276,7 @@ def solve_autoregressive_monolithic(mono_model, grid_true, start, end, max_steps
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nr, nc = r + dr, c + dc
             if 0 <= nr < 10 and 0 <= nc < 10:
-                if grid_true[nr][nc] in (0, 1, 2):
+                if grid_test[nr][nc] in (0, 1, 2):
                     neighbors.append((nr, nc))
 
         if not neighbors:
@@ -290,46 +317,77 @@ def run_experiment(epochs=40, lr=1e-3):
 
     labyrinths = []
     print("--------------------------------------------------")
-    print("STEP 1: Generating 100 Labyrinths for Associative Memorization")
+    print("STEP 1: Generating 100 Labyrinths with Disjoint Train/Test Splits (Dist >= 10)")
     print("--------------------------------------------------")
-    for i in range(100):
-        start = (random.randint(0, 2), random.randint(0, 2))
-        end = (random.randint(7, 9), random.randint(7, 9))
-        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_dead_ends=2, num_loops=1)
-        path = solve_bfs(grid, start=start, end=end)
-        while not path or len(path) <= 1:
+    for idx in range(100):
+        p1, p2 = None, None
+        while p2 is None:
+            start = (random.randint(0, 2), random.randint(0, 2))
+            end = (random.randint(7, 9), random.randint(7, 9))
             grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_dead_ends=2, num_loops=1)
-            path = solve_bfs(grid, start=start, end=end)
+
+            walkable = []
+            for r in range(10):
+                for c in range(10):
+                    if grid[r][c] in (0, 1, 2):
+                        walkable.append((r, c))
+
+            valid_pairs = []
+            for i in range(len(walkable)):
+                for j in range(i+1, len(walkable)):
+                    c1, c2 = walkable[i], walkable[j]
+                    dist = abs(c1[0]-c2[0]) + abs(c1[1]-c2[1])
+                    if dist >= 10:
+                        path = solve_bfs(grid, start=c1, end=c2)
+                        if path:
+                            valid_pairs.append((c1, c2, path))
+
+            if len(valid_pairs) >= 2:
+                random.shuffle(valid_pairs)
+                p1 = valid_pairs[0]
+                for pair in valid_pairs[1:]:
+                    if (p1[0] != pair[0] and p1[1] != pair[1] and p1[0] != pair[1] and p1[1] != pair[0]):
+                        p2 = pair
+                        break
+
         stats = analyze_labyrinth(grid)
-        labyrinths.append((grid, path, start, end, stats['difficulty']))
+        labyrinths.append((grid, p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], stats['difficulty']))
 
     # Print difficulty counts
     diff_counts = {'Easy': 0, 'Medium': 0, 'Hard': 0}
-    for _, _, _, _, diff in labyrinths:
+    for _, _, _, _, _, _, _, diff in labyrinths:
         diff_counts[diff] += 1
     print(f"Labyrinth Generation Complete! Difficulty breakdown:")
     for k, v in diff_counts.items():
         print(f"  - {k} Difficulty: {v} mazes")
     print("--------------------------------------------------\n")
 
-    # Build datasets
+    # Build datasets based on training pairs (p1)
     recon_data = []
     mod_data = []
     mono_data = []
 
-    for grid, path, start, end, diff in labyrinths:
-        flat_true_grid = [grid[r][c] for r in range(10) for c in range(10)]
-        for t in range(len(path) - 1):
-            curr_pos = path[t]
-            next_pos = path[t+1]
+    for grid, start_train, end_train, path_train, start_test, end_test, path_test, diff in labyrinths:
+        grid_train = [row[:] for row in grid]
+        for r in range(10):
+            for c in range(10):
+                if grid_train[r][c] in (1, 2):
+                    grid_train[r][c] = 0
+        grid_train[start_train[0]][start_train[1]] = 1
+        grid_train[end_train[0]][end_train[1]] = 2
+
+        flat_true_grid_train = [grid_train[r][c] for r in range(10) for c in range(10)]
+        for t in range(len(path_train) - 1):
+            curr_pos = path_train[t]
+            next_pos = path_train[t+1]
             curr_idx = curr_pos[0] * 10 + curr_pos[1]
             next_idx = next_pos[0] * 10 + next_pos[1]
 
-            visited = path[:t+1]
-            g_partial = get_partial_visibility_grid(flat_true_grid, visited, start, end)
+            visited = path_train[:t+1]
+            g_partial = get_partial_visibility_grid(flat_true_grid_train, visited, start_train, end_train)
 
-            recon_data.append((g_partial, flat_true_grid))
-            mod_data.append((flat_true_grid, curr_idx, next_idx))
+            recon_data.append((g_partial, flat_true_grid_train))
+            mod_data.append((flat_true_grid_train, curr_idx, next_idx))
             mono_data.append((g_partial, curr_idx, next_idx))
 
     train_recon_ds = ReconstructorDataset(recon_data)
@@ -365,7 +423,7 @@ def run_experiment(epochs=40, lr=1e-3):
             total_loss += loss.item() * p.size(0)
         epoch_loss = total_loss / len(train_recon_ds)
         recon_train_loss.append(epoch_loss)
-        if epoch % 5 == 0 or epoch == 1:
+        if epoch % 10 == 0 or epoch == 1:
             print(f"  [Reconstructor] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Train Modular Solver
@@ -388,7 +446,7 @@ def run_experiment(epochs=40, lr=1e-3):
             total_loss += loss.item() * g.size(0)
         epoch_loss = total_loss / len(train_mod_ds)
         mod_train_loss.append(epoch_loss)
-        if epoch % 5 == 0 or epoch == 1:
+        if epoch % 10 == 0 or epoch == 1:
             print(f"  [Modular Solver] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Train Monolithic Solver
@@ -411,7 +469,7 @@ def run_experiment(epochs=40, lr=1e-3):
             total_loss += loss.item() * g.size(0)
         epoch_loss = total_loss / len(train_mono_ds)
         mono_train_loss.append(epoch_loss)
-        if epoch % 5 == 0 or epoch == 1:
+        if epoch % 10 == 0 or epoch == 1:
             print(f"  [Monolithic Solver] Epoch {epoch:02d}/{epochs:02d} | Train Loss: {epoch_loss:.4f}")
 
     # Save Checkpoints
@@ -421,24 +479,24 @@ def run_experiment(epochs=40, lr=1e-3):
     torch.save(monolithic_solver.state_dict(), "labs/monolithic_solver.pt")
     print("\nAll model checkpoints successfully saved in 'labs/'.")
 
-    # Evaluation
+    # Evaluation on UNSEEN test pairs
     print("\n--------------------------------------------------")
-    print("STEP 5: Executing Comparative Evaluation Under Partial Observability")
+    print("STEP 5: Executing Comparative Evaluation Under Partial Observability (Unseen test pairs)")
     print("--------------------------------------------------")
-    print("Testing started on all 100 memorized environments step-by-step...\n")
+    print("Testing started on all 100 unseen start/end maze positions step-by-step...\n")
 
     results = {'Modular': [], 'Monolithic': []}
     all_modular_accuracies = []
 
-    for idx, (grid, opt_path, start, end, diff) in enumerate(labyrinths):
-        opt_len = len(opt_path)
+    for idx, (grid, start_train, end_train, path_train, start_test, end_test, path_test, diff) in enumerate(labyrinths):
+        opt_len = len(path_test)
 
         # 1. Modular Architecture
-        mod_path, mod_accs = solve_autoregressive_modular(reconstructor, modular_solver, grid, start, end, max_steps=40, device=device)
-        mod_success = 1 if mod_path[-1] == end else 0
+        mod_path, mod_accs = solve_autoregressive_modular(reconstructor, modular_solver, grid, start_test, end_test, max_steps=40, device=device)
+        mod_success = 1 if mod_path[-1] == end_test else 0
         mod_len = len(mod_path)
         mod_eff = opt_len / mod_len if mod_success else 0.0
-        mod_missteps = sum(1 for c in mod_path if c not in opt_path)
+        mod_missteps = sum(1 for c in mod_path if c not in path_test)
         mod_backtracks = mod_len - len(set(mod_path))
 
         results['Modular'].append((mod_success, mod_eff, mod_missteps, mod_backtracks, diff))
@@ -446,11 +504,11 @@ def run_experiment(epochs=40, lr=1e-3):
             all_modular_accuracies.append(mod_accs)
 
         # 2. Monolithic Architecture
-        mono_path = solve_autoregressive_monolithic(monolithic_solver, grid, start, end, max_steps=40, device=device)
-        mono_success = 1 if mono_path[-1] == end else 0
+        mono_path = solve_autoregressive_monolithic(monolithic_solver, grid, start_test, end_test, max_steps=40, device=device)
+        mono_success = 1 if mono_path[-1] == end_test else 0
         mono_len = len(mono_path)
         mono_eff = opt_len / mono_len if mono_success else 0.0
-        mono_missteps = sum(1 for c in mono_path if c not in opt_path)
+        mono_missteps = sum(1 for c in mono_path if c not in path_test)
         mono_backtracks = mono_len - len(set(mono_path))
 
         results['Monolithic'].append((mono_success, mono_eff, mono_missteps, mono_backtracks, diff))
@@ -461,11 +519,11 @@ def run_experiment(epochs=40, lr=1e-3):
 
     # Print results summary
     print("\n" + "="*65)
-    print("               EVALUATION METRICS SUMMARY & DIFFICULTY ANALYSIS")
+    print("               EVALUATION METRICS SUMMARY & GENERALIZATION ANALYSIS")
     print("="*65)
     for arch in ['Modular', 'Monolithic']:
         successes, effs, missteps, backtracks, _ = zip(*results[arch])
-        print(f"\n{arch} Architecture (Global Metrics across all 100 mazes):")
+        print(f"\n{arch} Architecture (Global Metrics on unseen start/end testing locations):")
         print(f"  - Success Rate:              {np.mean(successes)*100:.2f}%")
         print(f"  - Average Path Efficiency:   {np.mean(effs)*100:.2f}%")
         print(f"  - Avg Missteps Per Run:      {np.mean(missteps):.2f}")

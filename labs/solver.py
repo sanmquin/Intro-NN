@@ -28,7 +28,7 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
                 neighbors.append((nr, nc))
         return neighbors
 
-    # 1. Find a primary path from start to end using randomized DFS
+    # 1. Find a primary path using randomized DFS
     visited = {start}
     path_found = []
 
@@ -37,7 +37,6 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
             path_found.extend(path + [end])
             return True
         neighbors = get_neighbors(*curr)
-        # Sort neighbors by distance to end to keep it relatively direct, but random enough
         neighbors.sort(key=lambda c: abs(c[0]-end[0]) + abs(c[1]-end[1]) + random.uniform(-1.5, 1.5))
         for n in neighbors:
             if n not in visited:
@@ -48,22 +47,16 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
 
     dfs(start, [])
 
-    # If for some reason DFS failed, fallback to direct L-path
     if not path_found:
         curr_r, curr_c = start
         path_found.append(start)
         while (curr_r, curr_c) != end:
-            if curr_r < end[0]:
-                curr_r += 1
-            elif curr_r > end[0]:
-                curr_r -= 1
-            elif curr_c < end[1]:
-                curr_c += 1
-            elif curr_c > end[1]:
-                curr_c -= 1
+            if curr_r < end[0]: curr_r += 1
+            elif curr_r > end[0]: curr_r -= 1
+            elif curr_c < end[1]: curr_c += 1
+            elif curr_c > end[1]: curr_c -= 1
             path_found.append((curr_r, curr_c))
 
-    # Mark the primary path in the grid
     for r, c in path_found:
         grid[r][c] = 0
 
@@ -71,7 +64,6 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
     path_cells = [c for c in path_found if c != start and c != end]
     dead_ends_carved = 0
     attempts = 0
-    # Randomly target 1 to 3 dead ends
     target_dead_ends = random.randint(1, 3) if num_dead_ends is None else num_dead_ends
     while dead_ends_carved < target_dead_ends and attempts < 100:
         attempts += 1
@@ -80,12 +72,10 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
         random.shuffle(neighbors)
         for n in neighbors:
             if grid[n[0]][n[1]] == -1:
-                # n should only be adjacent to one path cell (branch_start)
                 path_adj = sum(1 for wn in get_neighbors(*n) if grid[wn[0]][wn[1]] != -1)
                 if path_adj == 1:
                     grid[n[0]][n[1]] = 0
                     dead_ends_carved += 1
-                    # Maybe extend dead end
                     curr = n
                     length = random.choice([0, 1, 2])
                     for _ in range(length):
@@ -102,7 +92,7 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
                             break
                     break
 
-    # 3. Add controlled loops (0 to 2 loops)
+    # 3. Add controlled loops
     target_loops = random.randint(0, 2) if num_loops is None else num_loops
     loops_carved = 0
     attempts = 0
@@ -116,11 +106,9 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
                 grid[r][c] = 0
                 loops_carved += 1
 
-    # Mark start and end
     grid[start[0]][start[1]] = 1
     grid[end[0]][end[1]] = 2
 
-    # Compute visibility labels
     final_grid = [[0 for _ in range(width)] for _ in range(height)]
     for r in range(height):
         for c in range(width):
@@ -131,21 +119,17 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
                 is_edge = False
                 for dr in [-1, 0, 1]:
                     for dc in [-1, 0, 1]:
-                        if dr == 0 and dc == 0:
-                            continue
+                        if dr == 0 and dc == 0: continue
                         nr, nc = r + dr, c + dc
                         if 0 <= nr < height and 0 <= nc < width:
                             if grid[nr][nc] in (0, 1, 2):
                                 is_edge = True
                                 break
-                    if is_edge:
-                        break
-
+                    if is_edge: break
                 if is_edge:
                     final_grid[r][c] = random.randint(3, 8)
                 else:
                     final_grid[r][c] = 9
-
     return final_grid
 
 # ---------------------------------------------------------
@@ -153,25 +137,16 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_e
 # ---------------------------------------------------------
 
 def solve_bfs(grid, start=(0, 0), end=(9, 9)):
-    """
-    Computes the absolute shortest path from start to end using Breadth-First Search (BFS).
-    Walkable cells are those with grid values in {0, 1, 2}.
-    Returns a list of coordinates representing the path, or None if no path exists.
-    """
-    height = len(grid)
-    width = len(grid[0])
+    height, width = len(grid), len(grid[0])
     queue = deque([[start]])
     visited = {start}
-
     while queue:
         path = queue.popleft()
         curr = path[-1]
-        if curr == end:
-            return path
-
+        if curr == end: return path
         r, c = curr
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = r + dr, c + dc
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
             if 0 <= nr < height and 0 <= nc < width:
                 if (nr, nc) not in visited and grid[nr][nc] in (0, 1, 2):
                     visited.add((nr, nc))
@@ -179,10 +154,6 @@ def solve_bfs(grid, start=(0, 0), end=(9, 9)):
     return None
 
 def analyze_labyrinth(grid):
-    """
-    Analyzes the labyrinth to identify choice points (intersections), dead ends,
-    path length, and classifies difficulty as 'Easy', 'Medium', or 'Hard'.
-    """
     height, width = len(grid), len(grid[0])
     walkable = []
     start, end = None, None
@@ -190,44 +161,25 @@ def analyze_labyrinth(grid):
         for c in range(width):
             if grid[r][c] in (0, 1, 2):
                 walkable.append((r, c))
-                if grid[r][c] == 1:
-                    start = (r, c)
-                elif grid[r][c] == 2:
-                    end = (r, c)
+                if grid[r][c] == 1: start = (r, c)
+                elif grid[r][c] == 2: end = (r, c)
 
     def get_neighbors(r, c):
         neighbors = []
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = r + dr, c + dc
-            if 0 <= nr < height and 0 <= nc < width:
-                neighbors.append((nr, nc))
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0 <= nr < height and 0 <= nc < width: neighbors.append((nr, nc))
         return neighbors
 
     num_intersections = 0
     num_dead_ends = 0
     for r, c in walkable:
         walk_neigh = sum(1 for n in get_neighbors(r, c) if grid[n[0]][n[1]] in (0, 1, 2))
-        if walk_neigh >= 3:
-            num_intersections += 1
-        elif walk_neigh == 1:
-            num_dead_ends += 1
+        if walk_neigh >= 3: num_intersections += 1
+        elif walk_neigh == 1: num_dead_ends += 1
 
-    # BFS path length
-    queue = deque([[start]])
-    visited = {start}
-    shortest_path_len = -1
-    while queue:
-        path = queue.popleft()
-        curr = path[-1]
-        if curr == end:
-            shortest_path_len = len(path)
-            break
-        for n in get_neighbors(*curr):
-            if n not in visited and grid[n[0]][n[1]] in (0, 1, 2):
-                visited.add(n)
-                queue.append(path + [n])
+    shortest_path_len = len(solve_bfs(grid, start, end)) if solve_bfs(grid, start, end) else -1
 
-    # Classify difficulty
     if num_intersections <= 2 and num_dead_ends <= 3:
         difficulty = 'Easy'
     elif num_intersections <= 4 and num_dead_ends <= 5:
