@@ -7,7 +7,8 @@ from labys.solver import (
     generate_transitions_from_shortest_path,
     LabyrinthDataset,
     LabyrinthTransformer,
-    solve_labyrinth_autoregressive
+    solve_labyrinth_autoregressive,
+    analyze_labyrinth
 )
 
 class TestLabyrinthSolver(unittest.TestCase):
@@ -101,6 +102,13 @@ class TestLabyrinthSolver(unittest.TestCase):
 
         logits = model(grid_tensor, curr_pos_tensor)
         self.assertEqual(logits.shape, (4, 100))
+
+    def test_difficulty_analysis(self):
+        stats = analyze_labyrinth(self.grid)
+        self.assertIn('difficulty', stats)
+        self.assertIn(stats['difficulty'], ['Easy', 'Medium', 'Hard'])
+        self.assertGreaterEqual(stats['walkable'], 10)
+        self.assertGreaterEqual(stats['shortest_path'], 1)
 
 if __name__ == '__main__':
     unittest.main()

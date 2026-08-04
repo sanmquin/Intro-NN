@@ -10,17 +10,13 @@ from collections import deque
 # 1. Non-Trivial Labyrinth Generation and Visibility Processing
 # ---------------------------------------------------------
 
-def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=6):
+def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_dead_ends=2, num_loops=1):
     """
-    Generates a sparse, non-trivial 10x10 labyrinth.
+    Generates a sparse, non-trivial 10x10 labyrinth with choice points and dead ends.
     - Walkable paths are 0.
     - Start is 1, End is 2.
     - Path edges (visible walls) are randomly labeled between 3 and 8.
     - Hidden/non-visible walls are labeled 9.
-
-    This generator creates a single sparse primary path from start to end,
-    then carves a small, controlled number of loops to provide multiple paths
-    while keeping the path density low (around 20-30% of the grid).
     """
     grid = [[-1 for _ in range(width)] for _ in range(height)]
 
@@ -32,7 +28,7 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=
                 neighbors.append((nr, nc))
         return neighbors
 
-    # 1. Find a primary path from start to end using randomized DFS
+    # 1. Find a primary path using randomized DFS
     visited = {start}
     path_found = []
 
@@ -41,7 +37,7 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=
             path_found.extend(path + [end])
             return True
         neighbors = get_neighbors(*curr)
-        random.shuffle(neighbors)
+        neighbors.sort(key=lambda c: abs(c[0]-end[0]) + abs(c[1]-end[1]) + random.uniform(-1.5, 1.5))
         for n in neighbors:
             if n not in visited:
                 visited.add(n)
@@ -51,49 +47,68 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=
 
     dfs(start, [])
 
-    # If for some reason DFS failed, fallback to direct L-path
     if not path_found:
         curr_r, curr_c = start
         path_found.append(start)
         while (curr_r, curr_c) != end:
-            if curr_r < end[0]:
-                curr_r += 1
-            elif curr_r > end[0]:
-                curr_r -= 1
-            elif curr_c < end[1]:
-                curr_c += 1
-            elif curr_c > end[1]:
-                curr_c -= 1
+            if curr_r < end[0]: curr_r += 1
+            elif curr_r > end[0]: curr_r -= 1
+            elif curr_c < end[1]: curr_c += 1
+            elif curr_c > end[1]: curr_c -= 1
             path_found.append((curr_r, curr_c))
 
-    # Mark the primary path in the grid
     for r, c in path_found:
         grid[r][c] = 0
 
-    # 2. Add controlled loops/extra paths
-    # We find wall cells that are adjacent to at least two path cells.
-    # Carving them creates a loop/alternative route.
+    # 2. Add explicit dead ends/branches
+    path_cells = [c for c in path_found if c != start and c != end]
+    dead_ends_carved = 0
+    attempts = 0
+    target_dead_ends = random.randint(1, 3) if num_dead_ends is None else num_dead_ends
+    while dead_ends_carved < target_dead_ends and attempts < 100:
+        attempts += 1
+        branch_start = random.choice(path_cells)
+        neighbors = get_neighbors(*branch_start)
+        random.shuffle(neighbors)
+        for n in neighbors:
+            if grid[n[0]][n[1]] == -1:
+                path_adj = sum(1 for wn in get_neighbors(*n) if grid[wn[0]][wn[1]] != -1)
+                if path_adj == 1:
+                    grid[n[0]][n[1]] = 0
+                    dead_ends_carved += 1
+                    curr = n
+                    length = random.choice([0, 1, 2])
+                    for _ in range(length):
+                        candidates = []
+                        for cn in get_neighbors(*curr):
+                            if grid[cn[0]][cn[1]] == -1:
+                                adj_walkable = sum(1 for wn in get_neighbors(*cn) if grid[wn[0]][wn[1]] != -1)
+                                if adj_walkable == 1:
+                                    candidates.append(cn)
+                        if candidates:
+                            curr = random.choice(candidates)
+                            grid[curr[0]][curr[1]] = 0
+                        else:
+                            break
+                    break
+
+    # 3. Add controlled loops
+    target_loops = random.randint(0, 2) if num_loops is None else num_loops
     loops_carved = 0
     attempts = 0
-    while loops_carved < num_loops and attempts < 100:
+    while loops_carved < target_loops and attempts < 50:
         attempts += 1
         r = random.randint(0, height - 1)
         c = random.randint(0, width - 1)
         if grid[r][c] == -1:
-            # Count path neighbors
             path_neighbors = [n for n in get_neighbors(r, c) if grid[n[0]][n[1]] == 0]
             if len(path_neighbors) >= 2:
                 grid[r][c] = 0
                 loops_carved += 1
 
-    # 3. Mark start and end
     grid[start[0]][start[1]] = 1
     grid[end[0]][end[1]] = 2
 
-    # 4. Compute visibility labels
-    # Any wall cell adjacent to a path cell (value 0, 1, or 2) in orth/diag direction is an edge.
-    # It gets a random integer between 3 and 8.
-    # Inner wall cells without any path adjacency are labeled 9.
     final_grid = [[0 for _ in range(width)] for _ in range(height)]
     for r in range(height):
         for c in range(width):
@@ -104,21 +119,17 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=
                 is_edge = False
                 for dr in [-1, 0, 1]:
                     for dc in [-1, 0, 1]:
-                        if dr == 0 and dc == 0:
-                            continue
+                        if dr == 0 and dc == 0: continue
                         nr, nc = r + dr, c + dc
                         if 0 <= nr < height and 0 <= nc < width:
                             if grid[nr][nc] in (0, 1, 2):
                                 is_edge = True
                                 break
-                    if is_edge:
-                        break
-
+                    if is_edge: break
                 if is_edge:
                     final_grid[r][c] = random.randint(3, 8)
                 else:
                     final_grid[r][c] = 9
-
     return final_grid
 
 # ---------------------------------------------------------
@@ -126,30 +137,63 @@ def generate_labyrinth(width=10, height=10, start=(0, 0), end=(9, 9), num_loops=
 # ---------------------------------------------------------
 
 def solve_bfs(grid, start=(0, 0), end=(9, 9)):
-    """
-    Computes the absolute shortest path from start to end using Breadth-First Search (BFS).
-    Walkable cells are those with grid values in {0, 1, 2}.
-    Returns a list of coordinates representing the path, or None if no path exists.
-    """
-    height = len(grid)
-    width = len(grid[0])
+    height, width = len(grid), len(grid[0])
     queue = deque([[start]])
     visited = {start}
-
     while queue:
         path = queue.popleft()
         curr = path[-1]
-        if curr == end:
-            return path
-
+        if curr == end: return path
         r, c = curr
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = r + dr, c + dc
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
             if 0 <= nr < height and 0 <= nc < width:
                 if (nr, nc) not in visited and grid[nr][nc] in (0, 1, 2):
                     visited.add((nr, nc))
                     queue.append(path + [(nr, nc)])
     return None
+
+def analyze_labyrinth(grid):
+    height, width = len(grid), len(grid[0])
+    walkable = []
+    start, end = None, None
+    for r in range(height):
+        for c in range(width):
+            if grid[r][c] in (0, 1, 2):
+                walkable.append((r, c))
+                if grid[r][c] == 1: start = (r, c)
+                elif grid[r][c] == 2: end = (r, c)
+
+    def get_neighbors(r, c):
+        neighbors = []
+        for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]:
+            nr, nc = r+dr, c+dc
+            if 0 <= nr < height and 0 <= nc < width: neighbors.append((nr, nc))
+        return neighbors
+
+    num_intersections = 0
+    num_dead_ends = 0
+    for r, c in walkable:
+        walk_neigh = sum(1 for n in get_neighbors(r, c) if grid[n[0]][n[1]] in (0, 1, 2))
+        if walk_neigh >= 3: num_intersections += 1
+        elif walk_neigh == 1: num_dead_ends += 1
+
+    shortest_path_len = len(solve_bfs(grid, start, end)) if solve_bfs(grid, start, end) else -1
+
+    if num_intersections <= 2 and num_dead_ends <= 3:
+        difficulty = 'Easy'
+    elif num_intersections <= 4 and num_dead_ends <= 5:
+        difficulty = 'Medium'
+    else:
+        difficulty = 'Hard'
+
+    return {
+        'walkable': len(walkable),
+        'intersections': num_intersections,
+        'dead_ends': num_dead_ends,
+        'shortest_path': shortest_path_len,
+        'difficulty': difficulty
+    }
 
 # ---------------------------------------------------------
 # 3. Transition Generation & Dataset Creation
@@ -190,9 +234,11 @@ class LabyrinthDataset(Dataset):
             torch.tensor(next_idx, dtype=torch.long)
         )
 
-def build_datasets(num_labyrinths=500, train_ratio=0.8, seed=42):
+def build_datasets(num_labyrinths=100, train_ratio=1.0, seed=42):
     """
     Generates dataset of transitions from multiple random labyrinths.
+    Since we want to memorize/reconstruct known labyrinths, we don't split,
+    or train/test ratio is 1.0 (train on all 100, test on all 100).
     """
     random.seed(seed)
     all_transitions = []
@@ -204,21 +250,16 @@ def build_datasets(num_labyrinths=500, train_ratio=0.8, seed=42):
         start = (random.randint(0, 3), random.randint(0, 3))
         end = (random.randint(6, 9), random.randint(6, 9))
 
-        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_loops=random.randint(4, 8))
+        grid = generate_labyrinth(width=10, height=10, start=start, end=end, num_dead_ends=2, num_loops=1)
         path = solve_bfs(grid, start=start, end=end)
         if path and len(path) > 1:
             transitions = generate_transitions_from_shortest_path(grid, path)
             all_transitions.extend(transitions)
             success_count += 1
 
-    # Shuffle and split
+    # Shuffle
     random.shuffle(all_transitions)
-    split_idx = int(len(all_transitions) * train_ratio)
-
-    train_data = all_transitions[:split_idx]
-    val_data = all_transitions[split_idx:]
-
-    return LabyrinthDataset(train_data), LabyrinthDataset(val_data)
+    return LabyrinthDataset(all_transitions), LabyrinthDataset(all_transitions)
 
 # ---------------------------------------------------------
 # 4. Labyrinth Transformer Model Implementation
