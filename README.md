@@ -119,6 +119,38 @@ To predict the $i$-th element of the sorted output, the self-attention layer mus
 
 ---
 
+## Task 7: Algorithmic Alignment in Neural Execution: A Step-by-Step Benchmark of Transformer Sorters
+We created a benchmark tutorial notebook `12.sorting_algorithms_benchmark_tutorial.ipynb` that compares the capacity of Transformers to act as **step-by-step state transition emulators** across five classical sorting algorithms: **Bubble Sort, Selection Sort, Insertion Sort, Cocktail Shaker Sort, and Odd-Even Sort**.
+
+### Empirical Performance Comparison Table (Step-by-Step State Transition):
+
+| Algorithm | Final Train Loss | Val Single-Step Token Acc | Val Multi-Step Rollout Success | Train Time (Seconds) |
+|---|---|---|---|---|
+| **Bubble Sort** | 0.0053 | 99.95% | 97.00% | ~18s |
+| **Odd-Even Sort** | 0.0715 | 97.23% | 16.50% | ~18s |
+| **Selection Sort** | 0.1554 | 94.84% | 3.50% | ~18s |
+| **Insertion Sort** | 0.2339 | 91.27% | 0.50% | ~18s |
+| **Cocktail Shaker Sort** | 0.2780 | 91.35% | 0.00% | ~18s |
+
+### Key Takeaways and Theoretical Insights
+1. **The Bubble Sort Locality Advantage**:
+   - Despite having an inferior traditional computational complexity ($O(N^2)$), Bubble Sort is exceptionally simple for a Transformer to emulate.
+   - Its transitions are highly localized (adjacent pairwise comparisons and swaps), which makes the target next-state function highly regular and easy to represent with standard multi-head self-attention. This results in **99.95% single-step token accuracy** and **97.00% multi-step rollout success**.
+2. **Selection Sort Representation Complexity**:
+   - In Selection Sort, the element at the current index $t$ is swapped with the minimum of the remaining suffix.
+   - This requires a double dynamic routing operation: identifying the minimum value and routing the element at $t$ to that dynamically determined position (`min_idx`). Because this target index varies dynamically based on the input values, a shallow Transformer has high representation complexity to learn it, leading to compounding errors under recursive trajectory rollouts (**3.50% rollout success**).
+3. **Insertion Sort Shifting Bottleneck**:
+   - Insertion Sort requires sliding/shifting variable-sized blocks of elements to make room for a new sorted element.
+   - If the model makes a single-token prediction error during a shift, the mistake cascades catastrophically, completely corrupting subsequent states. This results in a near-zero multi-step rollout success rate (**0.50%**).
+
+### Charts & Visual Assets
+- `charts/sorting_single_step_accuracy.png`: Single-step transition token accuracy curves over epochs for all 5 algorithms.
+- `charts/sorting_rollout_success.png`: Recursive trajectory rollout success rate curves, evaluating compounding errors.
+- `charts/sorting_training_cost.png`: A scatter plot demonstrating the trade-off between training wall-clock time and final rollout accuracy.
+- `charts/sorting_attention_routing.png`: Layer 1 attention weight routing maps illustrating how the self-attention mechanism processes step-by-step algorithms.
+
+---
+
 ## Execution Guide
 
 To generate notebooks and execute them:
