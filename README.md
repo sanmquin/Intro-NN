@@ -162,3 +162,26 @@ python3 create_transformer_notebook.py
 # Generate Parameter Study Notebook
 python3 create_parameter_study_notebook.py
 ```
+
+---
+
+## Task 8: Scaling Transformer Architectures for Global Labyrinth Planning
+We added a new tutorial notebook `labs/4.gpu_labyrinth_scaling_tutorial.ipynb` that systematically investigates why a labyrinth solver trained under partial visibility can sometimes outperform one trained under full visibility, and how we can scale the network capacity to resolve this.
+
+### Full vs. Partial Visibility Paradox
+- **The Problem**: In low-capacity networks, training a solver with full visibility of a 10x10 grid sequence introduces a massive receptive field with numerous wall distractors and alternative loops. This dilutes attention weights across the entire sequence. Under partial visibility, $3\times3$ masking acts as a regularizer, restricting local branch decisions.
+- **The Solution**: We scale the network capacity according to the optimal architecture identified in our recent sweep:
+  - **Embedding Dimension ($d_{model}$)**: Increased to **64** to expand representation space.
+  - **Attention Heads ($H$)**: Set to **4**, ensuring a robust query/key subspace size of $d_k = 16 \ge 8$ to prevent subspace collapse.
+  - **Transformer Layers ($L$)**: Set to **3** to model deep transitive path dependencies.
+  - **Final Fully Connected Dimension ($d_{fc}$)**: Set to **128** to act as an information expander.
+- **The Result**: With this scaled network, the full-visibility model successfully overcomes representation limitations, learning high-rank global routing and outperforming the limited-visibility model on unseen generalization test paths.
+
+### Google Colab GPU & Reusability Tutorial
+- **GPU Verification**: Includes a comprehensive tutorial on enabling and verifying GPUs in Google Colab (using `torch.cuda.is_available()` and `torch.cuda.get_device_name()`).
+- **Detailed Troubleshooting**: Explains the root causes and specific fixes for `CUDA Out of Memory (OOM)` errors and asynchronous `Device-side Assert Triggered` errors.
+- **Persistent Storage & Resumable Hooks**: Implements a reusable training wrapper designed to integrate with Google Drive. The interface checks `resume_training`, mounts Google Drive, loads existing checkpoints, and saves both versioned and latest model checkpoints.
+
+### Charts & Visual Assets
+- `charts/scaled_labyrinth_loss_curves.png`: Training and validation loss curves for both full-visibility and partial-visibility models.
+- `charts/scaled_labyrinth_generalization_comparison.png`: Generalization performance comparison on unseen test paths, demonstrating that the scaled full-visibility model successfully outperforms its partial-visibility counterpart.
