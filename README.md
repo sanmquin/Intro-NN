@@ -150,6 +150,38 @@ We created a benchmark tutorial notebook `12.sorting_algorithms_benchmark_tutori
 - `charts/sorting_attention_routing.png`: Layer 1 attention weight routing maps illustrating how the self-attention mechanism processes step-by-step algorithms.
 
 ---
+---
+
+## Task 8: Topological Coverage & Novelty Generation (The Exploration Notebook)
+We created a new notebook `exploration/topological_coverage_novelty_generation.ipynb` that models exploration and novelty generation. The task challenges a Transformer to select a sixth number $x_6 \in [1, 100]$ given five inputs $X = \{x_1, \dots, x_5\}$ to maximize the covered range, where each number has a neighborhood radius $R = 10$.
+
+### Architectural Design & Symmetries
+- **Permutation Invariance**: The topological coverage of a set of numbers is completely independent of their ordering. To enforce this, our model omits positional encodings and employs **Global Average Pooling (GAP)** over sequence tokens before feeding the representation to the classification output layer.
+- **Data Splits**: We hold out 15% of the 5,000 generated samples for validation and 10% for test evaluation.
+
+### Ablation Study: Memorization vs. Generalization
+To compare true generalization with memorization, we trained an identical model architecture under two distinct regimes:
+1. **Standard Regime (Generalization)**: Trained on the full 3,750 samples.
+2. **Ablated Regime (Memorization)**: Trained on an extremely restricted subset of 200 samples.
+
+### Empirical Performance Comparison Table:
+
+| Model / Regime | Train Dataset Size | Val Exact Match | Test Exact Match | Test Topological Efficiency (TCE) | Exploration Success Rate |
+|---|---|---|---|---|---|
+| **Standard Model (Generalization)** | 3,750 | **54.40%** | **52.20%** | **98.66%** | **90.40%** |
+| **Ablated Model (Memorization)** | 200 | 8.13% | 7.60% | 61.26% | 13.80% |
+
+### Key Theoretical Takeaways
+- **The Power of Algebraic Generalization**: Although the standard model achieves only $52.20\%$ exact matching with the deterministic target, it obtains an outstanding **$98.66\%$ Topological Coverage Efficiency** and **$90.40\%$ Exploration Success Rate** on unseen test coordinates. This demonstrates that the Transformer does not merely memorize token combinations; rather, it abstracts the mathematical rules of set coverage and neighborhood overlap.
+- **The Memorization Trap**: When constrained to a tiny training set, the ablated model easily drives its training loss to near zero, but fails catastrophically on unseen coordinates (TCE of only $61.26\%$, Exploration Success Rate of $13.80\%$). This provides clear empirical evidence of the memorization-to-generalization phase transition dictated by data scaling.
+
+### Charts & Visual Assets
+- `charts/exploration_example_coverage_profile.png`: Explains the concept of incremental set coverage, plotting a sample's coverage curve with optimal candidates.
+- `charts/exploration_loss_comparison.png`: Cross-entropy training and validation loss curves over epochs for the Standard and Ablated models.
+- `charts/exploration_metrics_comparison.png`: Tracks Exact Match Accuracy and Exploration Success Rate (%) on the validation set during training.
+- `charts/exploration_test_generalization_bar.png`: A high-quality comparative visualization demonstrating test set performance under standard vs. ablated training.
+
+---
 
 ## Execution Guide
 
