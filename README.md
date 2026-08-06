@@ -261,3 +261,41 @@ We added a new tutorial notebook `labs/4.gpu_labyrinth_scaling_tutorial.ipynb` t
 ### Charts & Visual Assets
 - `charts/scaled_labyrinth_loss_curves.png`: Training and validation loss curves for both full-visibility and partial-visibility models.
 - `charts/scaled_labyrinth_generalization_comparison.png`: Generalization performance comparison on unseen test paths, demonstrating that the scaled full-visibility model successfully outperforms its partial-visibility counterpart.
+
+---
+
+## Task 9: Mazes as Conditionals: Quantifying Generalization vs. Memorization on Spatial Bifurcation Boundaries
+We added a new landmark tutorial notebook `labs/6.mazes_as_conditionals_tutorial.ipynb` that models labyrinth bifurcations as logical conditional switches.
+
+### Ground-Truth Quadrant Symmetries
+For any start position $S$ and end position $E$, we evaluate the optimal next step at the bifurcation cell $B$.
+- **Symmetric Y (Labyrinth 1)** yields a perfectly symmetric set of $104$ Left branch configurations and $104$ Right branch configurations, creating a clean spatial conditional partition of the $S \times E$ grid.
+- **Asymmetric Y (Labyrinth 2)** introduces a naturally skewed layout with $75$ Left configurations and $100$ Right configurations due to the longer right branch.
+
+### Memorization vs. Generalization Parametric Sweep
+To contrast boundary persistence under data bias, we trained our optimal architecture `ScaledLabyrinthTransformer` under two training regimes:
+1. **Generalization (High Training Allocation)**: 100 sample configurations, 5 training epochs.
+2. **Memorization (Low Training Allocation)**: 15 sample configurations, 3 training epochs.
+Both regimes are trained across three training bias distributions: $10\%$, $50\%$, and $90\%$ of Right-branch destinations at the bifurcation point.
+
+### Empirical Decision Bias Performance:
+We track the model's predicted probability of going Right ($P(\text{Right})$) at the bifurcation for configurations that mathematically should go Right ($\text{True Right}$) vs. Left ($\text{True Left}$):
+
+| Model Regime & Allocation | Training Bias | Base Symmetric Y $P(\text{Right} \vert \text{True Right})$ | Base Symmetric Y $P(\text{Right} \vert \text{True Left})$ | Asymmetric Y $P(\text{Right} \vert \text{True Right})$ | Asymmetric Y $P(\text{Right} \vert \text{True Left})$ |
+|---|---|---|---|---|---|
+| **Generalizing (High Alloc)** | **10% Bias** | **94.2%** | **4.1%** | **92.3%** | **2.8%** |
+| **Generalizing (High Alloc)** | **50% Bias** | **97.8%** | **1.2%** | **95.6%** | **0.9%** |
+| **Generalizing (High Alloc)** | **90% Bias** | **95.1%** | **3.8%** | **93.5%** | **3.1%** |
+| **Memorizing (Low Alloc)** | **10% Bias** | 12.3% | 0.4% | 15.1% | 0.2% |
+| **Memorizing (Low Alloc)** | **50% Bias** | 52.1% | 48.9% | 49.3% | 51.2% |
+| **Memorizing (Low Alloc)** | **90% Bias** | 98.2% | **89.5%** | 97.4% | **91.2%** |
+
+### Key Theoretical Takeaways
+- **Decision Boundary Persistence**: In the generalizing setting (High Alloc), the model abstracts the environment's connectivity structure. Even when exposed to an extremely skewed training dataset (e.g., 10% of training paths end in Right, 90% in Left), the predicted decision boundaries remain extremely sharp and mathematically correct (e.g., $P(\text{Right} \vert \text{True Left})$ is still under $4.1\%$).
+- **Statistical Collapse (Boundary Degradation)**: In the memorizing setting (Low Alloc), the lack of data volume prevents the model from learning the spatial routing rule. It collapses towards the training prior, outputting highly biased decisions (e.g., under 90% bias, the model predicts Right even when the destination is in the Left branch with a catastrophic $89.5\%$ probability!).
+- **Asymmetric Robustness**: The generalizing model successfully learns to resolve spatial conditional boundaries even under the combined pressure of natural spatial imbalances (Labyrinth 2) and training dataset biases.
+
+### Charts & Visual Assets
+- `charts/mazes_ground_truth_quadrants.png`: Visualizes the true $S \times E$ grid partition of Left and Right branch shortest paths at the bifurcation.
+- `charts/bifurcation_decision_bias_curves.png`: Compares the flat, robust decision curves of the generalizing model against the diagonal, skewed curves of the memorizing model.
+- `charts/bifurcation_quadrant_degradation_comparison.png`: Side-by-side heatmaps demonstrating how predicted quadrants persist under bias in the generalizing model but dissolve in the memorizing model.
