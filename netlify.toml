@@ -1,0 +1,3 @@
+[build]
+  command = "cd web && npm run build"
+  publish = "web/dist"

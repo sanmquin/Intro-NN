@@ -1,0 +1,18 @@
+
+> transformer-attention-visualizer@0.1.0 build
+> tsc && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 1566 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.70 kB │ gzip:   0.45 kB
+dist/assets/index-ChzIm4o3.css   23.95 kB │ gzip:   4.68 kB
+dist/assets/index-B4AL4s_Q.js   525.76 kB │ gzip: 217.02 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 4.81s
