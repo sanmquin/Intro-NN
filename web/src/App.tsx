@@ -1,9 +1,14 @@
 import { useState, useMemo } from 'react';
-import { Sparkles, Brain, Cpu, RefreshCw, BarChart2 } from 'lucide-react';
+import { Sparkles, Brain, Cpu, RefreshCw, BarChart2, Network, Database, Layers } from 'lucide-react';
 import { runInference, getMagnitudeBilinearScores } from './model/transformer';
 import AttentionHeatmap from './components/AttentionHeatmap';
 import ArchitectureDiagram from './components/ArchitectureDiagram';
 import MathExplainer from './components/MathExplainer';
+import EmbeddingScatterPlot from './components/EmbeddingScatterPlot';
+import ParameterInspector from './components/ParameterInspector';
+import LogitInfluenceVisualizer from './components/LogitInfluenceVisualizer';
+
+type MainTab = 'attention' | 'embeddings' | 'parameters' | 'influence';
 
 export default function App() {
   const [inputTokens, setInputTokens] = useState<number[]>([4, 2, 8, 1, 3]);
@@ -11,6 +16,7 @@ export default function App() {
   const [selectedHead, setSelectedHead] = useState<number>(0);
   const [activeMathBlock, setActiveMathBlock] = useState<string>('layer1');
   const [hoveredTokenIdx, setHoveredTokenIdx] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<MainTab>('attention');
 
   const trace = useMemo(() => {
     return runInference(inputTokens);
@@ -90,6 +96,55 @@ export default function App() {
           </span>
         </div>
       </header>
+
+      {/* Main Navigation Tabs */}
+      <div className="bg-zinc-950/60 border-b border-zinc-900 sticky top-[65px] z-20 px-6 py-2.5 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setActiveTab('attention')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+              activeTab === 'attention'
+                ? 'bg-indigo-500 text-white shadow-[0_0_12px_rgba(99,102,241,0.3)] font-bold'
+                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+            }`}
+          >
+            <Brain className="w-3.5 h-3.5" /> Attention & Execution Trace
+          </button>
+
+          <button
+            onClick={() => setActiveTab('embeddings')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+              activeTab === 'embeddings'
+                ? 'bg-cyan-500 text-zinc-950 shadow-[0_0_12px_rgba(6,182,212,0.3)] font-bold'
+                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+            }`}
+          >
+            <Network className="w-3.5 h-3.5" /> Vocabulary Embeddings (PCA)
+          </button>
+
+          <button
+            onClick={() => setActiveTab('parameters')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+              activeTab === 'parameters'
+                ? 'bg-indigo-500 text-white shadow-[0_0_12px_rgba(99,102,241,0.3)] font-bold'
+                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" /> Network Parameters Inspector
+          </button>
+
+          <button
+            onClick={() => setActiveTab('influence')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+              activeTab === 'influence'
+                ? 'bg-emerald-500 text-zinc-950 shadow-[0_0_12px_rgba(16,185,129,0.3)] font-bold'
+                : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" /> Classifier Logit Influence
+          </button>
+        </div>
+      </div>
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
@@ -234,14 +289,36 @@ export default function App() {
           </div>
         </section>
 
-        <section>
-          <MathExplainer
-            trace={trace}
-            selectedLayer={selectedLayer}
-            selectedHead={selectedHead}
-            activeMathBlock={activeMathBlock}
-          />
-        </section>
+        {activeTab === 'attention' && (
+          <>
+            <section>
+              <MathExplainer
+                trace={trace}
+                selectedLayer={selectedLayer}
+                selectedHead={selectedHead}
+                activeMathBlock={activeMathBlock}
+              />
+            </section>
+          </>
+        )}
+
+        {activeTab === 'embeddings' && (
+          <section>
+            <EmbeddingScatterPlot />
+          </section>
+        )}
+
+        {activeTab === 'parameters' && (
+          <section>
+            <ParameterInspector />
+          </section>
+        )}
+
+        {activeTab === 'influence' && (
+          <section>
+            <LogitInfluenceVisualizer trace={trace} />
+          </section>
+        )}
 
       </main>
 
