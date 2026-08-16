@@ -363,3 +363,22 @@ Flattening a 2D grid into a 1D sequence introduces a major spatial bottleneck: e
 - `charts/linear_attention_training_curves.png`: Training cross-entropy loss trajectories and validation transition token accuracies over training epochs.
 - `charts/linear_attention_metrics_comparison.png`: Side-by-side bar plots comparing final transition accuracy, trajectory rollout success, and computational training speed.
 - `charts/kimi_linear_forget_gate_heatmap.png`: A high-precision attention-head-by-channel heatmap showing the average forget gate vector values, proving channel-specific memory specialization.
+
+---
+
+## Interactive Web Application: Transformer Interpretability Dashboard (`web/`)
+
+An interactive React + Vite + TypeScript web application showcasing zero-latency forward pass inference, attention routing mechanisms, embedding space projections, parameter deep-dives, and output logit attributions.
+
+### Application Modules & Features
+1. **Attention & Forward Pass Trace**: Interactive input sequence selector, step-by-step layer/head execution trace, dynamic self-attention heatmaps, bilinear Query-Key magnitude bias matrix.
+2. **Vocabulary & Positional Embedding Space**: 2D PCA scatter plot visualizing digits 0-9 in embedding space with positional encoding toggles ($PE_1 \dots PE_5$) and hover inspection.
+3. **Network Parameter Inspector**: Deep-dive tree and 2D heatmap inspector across all 13,802 parameters (Embeddings, PE, Q/K/V/O projections, LayerNorms, FFNs, Output Classifier).
+4. **Classifier FC Influence**: Linear contribution breakdown ($h_i \cdot W_{out}$) mapping 32D Transformer representations from Layer 2 to output classification logits.
+
+To run locally:
+```bash
+cd web
+npm install
+npm run dev
+```

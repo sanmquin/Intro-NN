@@ -405,3 +405,298 @@ export function getMagnitudeBilinearScores(): number[][] {
 
   return bilinearScores;
 }
+
+/**
+ * Returns raw model weights for deep inspection.
+ */
+export function getRawWeights(): TransformerWeights {
+  return weights;
+}
+
+export interface PCAResult {
+  coords: { x: number; y: number }[];
+  varianceExplained: [number, number];
+}
+
+/**
+ * Computes Principal Component Analysis (PCA) on high-dimensional vectors (e.g. 32D embeddings)
+ * to project them into 2D coordinates for visual scatter plots.
+ */
+export function computePCA(vectors: number[][]): PCAResult {
+  const N = vectors.length;
+  if (N === 0) return { coords: [], varianceExplained: [0, 0] };
+  const D = vectors[0].length;
+
+  // 1. Calculate Mean Vector
+  const mean = new Array(D).fill(0);
+  for (let i = 0; i < N; i++) {
+    for (let d = 0; d < D; d++) {
+      mean[d] += vectors[i][d];
+    }
+  }
+  for (let d = 0; d < D; d++) {
+    mean[d] /= N;
+  }
+
+  // 2. Center Vectors
+  const centered: number[][] = [];
+  for (let i = 0; i < N; i++) {
+    const row = new Array(D);
+    for (let d = 0; d < D; d++) {
+      row[d] = vectors[i][d] - mean[d];
+    }
+    centered.push(row);
+  }
+
+  // 3. Compute Covariance Matrix (D x D)
+  const cov: number[][] = Array.from({ length: D }, () => new Array(D).fill(0));
+  for (let i = 0; i < D; i++) {
+    for (let j = 0; j < D; j++) {
+      let sum = 0;
+      for (let k = 0; k < N; k++) {
+        sum += centered[k][i] * centered[k][j];
+      }
+      cov[i][j] = sum / (N > 1 ? N - 1 : 1);
+    }
+  }
+
+  // Compute Total Variance (Trace of Covariance Matrix)
+  let totalVariance = 0;
+  for (let i = 0; i < D; i++) {
+    totalVariance += cov[i][i];
+  }
+  if (totalVariance === 0) totalVariance = 1;
+
+  // Power Iteration for Top Eigenvector (PC1)
+  const powerIteration = (matrix: number[][], maxIter = 80): { vector: number[]; eigenvalue: number } => {
+    let vec = new Array(D).fill(0).map(() => Math.random() - 0.5);
+    let norm = Math.sqrt(vec.reduce((sum, v) => sum + v * v, 0));
+    vec = vec.map(v => v / (norm || 1));
+
+    for (let iter = 0; iter < maxIter; iter++) {
+      const nextVec = new Array(D).fill(0);
+      for (let r = 0; r < D; r++) {
+        for (let c = 0; c < D; c++) {
+          nextVec[r] += matrix[r][c] * vec[c];
+        }
+      }
+      norm = Math.sqrt(nextVec.reduce((sum, v) => sum + v * v, 0));
+      if (norm < 1e-12) break;
+      vec = nextVec.map(v => v / norm);
+    }
+
+    // Compute eigenvalue lambda = v^T * A * v
+    let eigenvalue = 0;
+    for (let r = 0; r < D; r++) {
+      let rowSum = 0;
+      for (let c = 0; c < D; c++) {
+        rowSum += matrix[r][c] * vec[c];
+      }
+      eigenvalue += vec[r] * rowSum;
+    }
+
+    return { vector: vec, eigenvalue: Math.max(0, eigenvalue) };
+  };
+
+  // PC1
+  const pc1Result = powerIteration(cov);
+  const pc1 = pc1Result.vector;
+
+  // Deflate Covariance Matrix: C_deflated = C - lambda1 * (v1 * v1^T)
+  const covDeflated: number[][] = Array.from({ length: D }, () => new Array(D).fill(0));
+  for (let r = 0; r < D; r++) {
+    for (let c = 0; c < D; c++) {
+      covDeflated[r][c] = cov[r][c] - pc1Result.eigenvalue * pc1[r] * pc1[c];
+    }
+  }
+
+  // PC2
+  const pc2Result = powerIteration(covDeflated);
+  const pc2 = pc2Result.vector;
+
+  // 4. Project Centered Data onto PC1 and PC2
+  const coords = centered.map(vec => {
+    let x = 0;
+    let y = 0;
+    for (let d = 0; d < D; d++) {
+      x += vec[d] * pc1[d];
+      y += vec[d] * pc2[d];
+    }
+    return { x, y };
+  });
+
+  const var1 = Math.min(100, (pc1Result.eigenvalue / totalVariance) * 100);
+  const var2 = Math.min(100, (pc2Result.eigenvalue / totalVariance) * 100);
+
+  return {
+    coords,
+    varianceExplained: [var1, var2],
+  };
+}
+
+export interface TensorInfo {
+  id: string;
+  name: string;
+  group: string;
+  shape: number[];
+  paramCount: number;
+  data: number[] | number[][];
+  min: number;
+  max: number;
+  mean: number;
+  std: number;
+}
+
+/**
+ * Extracts comprehensive details, parameter shapes, counts, and metrics for every layer in the network.
+ */
+export function getNetworkParameterDetails(): {
+  tensors: TensorInfo[];
+  totalParams: number;
+  groupBreakdown: { group: string; count: number }[];
+} {
+  const tensors: TensorInfo[] = [];
+
+  const addTensor = (id: string, name: string, group: string, shape: number[], data: number[] | number[][]) => {
+    // Flatten data to compute metrics
+    const flat: number[] = [];
+    if (Array.isArray(data[0])) {
+      (data as number[][]).forEach(row => flat.push(...row));
+    } else {
+      flat.push(...(data as number[]));
+    }
+
+    const paramCount = flat.length;
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+
+    for (let i = 0; i < flat.length; i++) {
+      const v = flat[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+      sum += v;
+    }
+    const mean = sum / paramCount;
+
+    let varSum = 0;
+    for (let i = 0; i < flat.length; i++) {
+      varSum += Math.pow(flat[i] - mean, 2);
+    }
+    const std = Math.sqrt(varSum / paramCount);
+
+    tensors.push({ id, name, group, shape, paramCount, data, min, max, mean, std });
+  };
+
+  addTensor('embedding', 'Token Embedding Matrix (W_emb)', 'Embeddings', [10, 32], weights.embedding);
+  addTensor('pe', 'Positional Encoding Matrix (PE)', 'Embeddings', [5, 32], weights.pe);
+
+  weights.layers.forEach((lw, idx) => {
+    const lName = `Layer ${idx + 1}`;
+    addTensor(`l${idx}_norm1_w`, `${lName} - LayerNorm 1 Weight`, lName, [32], lw.norm1.weight);
+    addTensor(`l${idx}_norm1_b`, `${lName} - LayerNorm 1 Bias`, lName, [32], lw.norm1.bias);
+
+    addTensor(`l${idx}_attn_q`, `${lName} - Attention Query Projection (W_q)`, lName, [32, 32], lw.attn.W_q);
+    addTensor(`l${idx}_attn_k`, `${lName} - Attention Key Projection (W_k)`, lName, [32, 32], lw.attn.W_k);
+    addTensor(`l${idx}_attn_v`, `${lName} - Attention Value Projection (W_v)`, lName, [32, 32], lw.attn.W_v);
+    addTensor(`l${idx}_attn_o`, `${lName} - Attention Output Projection (W_o)`, lName, [32, 32], lw.attn.W_o);
+
+    addTensor(`l${idx}_norm2_w`, `${lName} - LayerNorm 2 Weight`, lName, [32], lw.norm2.weight);
+    addTensor(`l${idx}_norm2_b`, `${lName} - LayerNorm 2 Bias`, lName, [32], lw.norm2.bias);
+
+    addTensor(`l${idx}_ff1_w`, `${lName} - FFN FC1 Weight`, lName, [64, 32], lw.ff.fc1.weight);
+    addTensor(`l${idx}_ff1_b`, `${lName} - FFN FC1 Bias`, lName, [64], lw.ff.fc1.bias);
+    addTensor(`l${idx}_ff2_w`, `${lName} - FFN FC2 Weight`, lName, [32, 64], lw.ff.fc2.weight);
+    addTensor(`l${idx}_ff2_b`, `${lName} - FFN FC2 Bias`, lName, [32], lw.ff.fc2.bias);
+  });
+
+  addTensor('final_norm_w', 'Final LayerNorm Weight', 'Final LayerNorm', [32], weights.norm.weight);
+  addTensor('final_norm_b', 'Final LayerNorm Bias', 'Final LayerNorm', [32], weights.norm.bias);
+
+  addTensor('fc_out_w', 'Classifier Output Weight (W_out)', 'Classifier FC', [10, 32], weights.fc_out.weight);
+  addTensor('fc_out_b', 'Classifier Output Bias (b_out)', 'Classifier FC', [10], weights.fc_out.bias);
+
+  let totalParams = 0;
+  const groupMap = new Map<string, number>();
+
+  tensors.forEach(t => {
+    totalParams += t.paramCount;
+    const current = groupMap.get(t.group) || 0;
+    groupMap.set(t.group, current + t.paramCount);
+  });
+
+  const groupBreakdown = Array.from(groupMap.entries()).map(([group, count]) => ({ group, count }));
+
+  return { tensors, totalParams, groupBreakdown };
+}
+
+export interface DimensionContribution {
+  dimIndex: number;
+  activation: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface LogitAttribution {
+  tokenPosition: number;
+  digit: number;
+  finalNormVector: number[];
+  fcWeightRow: number[];
+  fcBias: number;
+  contributions: number[];
+  totalLogit: number;
+  topPositive: DimensionContribution[];
+  topNegative: DimensionContribution[];
+}
+
+/**
+ * Computes dimension-wise influence from the last transformer layer output (finalNorm)
+ * into the final fully connected output layer (fc_out) for a specific position and target digit.
+ */
+export function getLogitAttribution(
+  trace: TransformerActivationTrace,
+  positionIdx: number,
+  digit: number
+): LogitAttribution {
+  const finalNormVector = trace.finalNorm[positionIdx]; // [32]
+  const fcWeightRow = weights.fc_out.weight[digit];     // [32]
+  const fcBias = weights.fc_out.bias[digit];
+
+  const contributions: number[] = new Array(32);
+  const dimList: DimensionContribution[] = [];
+  let sumProd = 0;
+
+  for (let k = 0; k < 32; k++) {
+    const act = finalNormVector[k];
+    const w = fcWeightRow[k];
+    const prod = act * w;
+    contributions[k] = prod;
+    sumProd += prod;
+
+    dimList.push({
+      dimIndex: k,
+      activation: act,
+      weight: w,
+      contribution: prod,
+    });
+  }
+
+  const totalLogit = sumProd + fcBias;
+
+  // Sort dimensions by contribution descending
+  const sorted = [...dimList].sort((a, b) => b.contribution - a.contribution);
+  const topPositive = sorted.filter(d => d.contribution > 0).slice(0, 6);
+  const topNegative = sorted.filter(d => d.contribution < 0).reverse().slice(0, 6);
+
+  return {
+    tokenPosition: positionIdx,
+    digit,
+    finalNormVector,
+    fcWeightRow,
+    fcBias,
+    contributions,
+    totalLogit,
+    topPositive,
+    topNegative,
+  };
+}
