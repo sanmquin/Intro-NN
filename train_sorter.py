@@ -21,9 +21,7 @@ set_seed()
 SEQ_LEN = 5
 VOCAB_SIZE = 10
 D_MODEL = 32
-N_HEADS = 2
 D_FF = 64
-N_LAYERS = 2
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=10):
@@ -87,6 +85,11 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerSorter(nn.Module):
     def __init__(self, vocab_size, seq_len, d_model, n_heads, d_ff, n_layers):
         super().__init__()
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.n_layers = n_layers
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pe = PositionalEncoding(d_model, max_len=seq_len)
         self.layers = nn.ModuleList([
@@ -117,100 +120,121 @@ def create_dataset(num_samples):
         targets.append(tar)
     return torch.tensor(inputs), torch.tensor(targets)
 
-train_inputs, train_targets = create_dataset(30000)
-val_inputs, val_targets = create_dataset(5000)
+def train_and_export_model(n_layers, n_heads, model_key, train_loader, val_loader):
+    print(f"\n================ Training Model Variant: {model_key} (Layers: {n_layers}, Heads: {n_heads}) ================")
+    model = TransformerSorter(VOCAB_SIZE, SEQ_LEN, D_MODEL, n_heads, D_FF, n_layers)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(model.parameters(), lr=0.0025, weight_decay=1e-4)
 
-train_loader = DataLoader(TensorDataset(train_inputs, train_targets), batch_size=256, shuffle=True)
-val_loader = DataLoader(TensorDataset(val_inputs, val_targets), batch_size=256, shuffle=False)
-
-model = TransformerSorter(VOCAB_SIZE, SEQ_LEN, D_MODEL, N_HEADS, D_FF, N_LAYERS)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.AdamW(model.parameters(), lr=0.002, weight_decay=1e-4)
-
-for epoch in range(1, 16):
-    model.train()
-    total_loss = 0.0
-    for inputs, targets in train_loader:
-        optimizer.zero_grad()
-        logits, _ = model(inputs)
-        loss = criterion(logits.view(-1, VOCAB_SIZE), targets.view(-1))
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item() * inputs.size(0)
-
-    # Val check
-    model.eval()
-    correct_tokens = 0
-    total_tokens = 0
-    correct_sequences = 0
-    with torch.no_grad():
-        for inputs, targets in val_loader:
+    for epoch in range(1, 20):
+        model.train()
+        total_loss = 0.0
+        for inputs, targets in train_loader:
+            optimizer.zero_grad()
             logits, _ = model(inputs)
-            preds = torch.argmax(logits, dim=-1)
-            correct_tokens += (preds == targets).sum().item()
-            total_tokens += targets.numel()
-            correct_sequences += (preds == targets).all(dim=-1).sum().item()
+            loss = criterion(logits.view(-1, VOCAB_SIZE), targets.view(-1))
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * inputs.size(0)
 
-    token_acc = correct_tokens / total_tokens
-    seq_acc = correct_sequences / len(val_loader.dataset)
-    print(f"Epoch {epoch:02d} | Train Loss: {total_loss / len(train_loader.dataset):.4f} | Val Token Acc: {token_acc*100:.2f}% | Val Seq Acc: {seq_acc*100:.2f}%")
-    if seq_acc > 0.999:
-        print("Convergence achieved!")
-        break
+        model.eval()
+        correct_tokens = 0
+        total_tokens = 0
+        correct_sequences = 0
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                logits, _ = model(inputs)
+                preds = torch.argmax(logits, dim=-1)
+                correct_tokens += (preds == targets).sum().item()
+                total_tokens += targets.numel()
+                correct_sequences += (preds == targets).all(dim=-1).sum().item()
 
-# Export weights to JSON
-# Make sure directory exists
-os.makedirs("web/src", exist_ok=True)
+        token_acc = correct_tokens / total_tokens
+        seq_acc = correct_sequences / len(val_loader.dataset)
+        print(f"Epoch {epoch:02d} | Loss: {total_loss / len(train_loader.dataset):.4f} | Token Acc: {token_acc*100:.2f}% | Seq Acc: {seq_acc*100:.2f}%")
+        if seq_acc > 0.998:
+            print(f"--> Convergence achieved for {model_key}!")
+            break
 
-# Helper to convert tensor to nested lists
-def t2l(tensor):
-    return tensor.detach().cpu().numpy().tolist()
+    # Convert weights to dict structure
+    def t2l(tensor):
+        return tensor.detach().cpu().numpy().tolist()
 
-weights = {
-    "embedding": t2l(model.embedding.weight),
-    "pe": t2l(model.pe.pe), # Positional encodings (5, 32)
-    "layers": []
-}
+    weights = {
+        "n_layers": n_layers,
+        "n_heads": n_heads,
+        "d_model": D_MODEL,
+        "embedding": t2l(model.embedding.weight),
+        "pe": t2l(model.pe.pe),
+        "layers": []
+    }
 
-for layer in model.layers:
-    layer_weights = {
-        "norm1": {
-            "weight": t2l(layer.norm1.weight),
-            "bias": t2l(layer.norm1.bias)
-        },
-        "attn": {
-            "W_q": t2l(layer.attn.W_q.weight),
-            "W_k": t2l(layer.attn.W_k.weight),
-            "W_v": t2l(layer.attn.W_v.weight),
-            "W_o": t2l(layer.attn.W_o.weight)
-        },
-        "norm2": {
-            "weight": t2l(layer.norm2.weight),
-            "bias": t2l(layer.norm2.bias)
-        },
-        "ff": {
-            "fc1": {
-                "weight": t2l(layer.ff.fc1.weight),
-                "bias": t2l(layer.ff.fc1.bias)
+    for layer in model.layers:
+        layer_weights = {
+            "norm1": {
+                "weight": t2l(layer.norm1.weight),
+                "bias": t2l(layer.norm1.bias)
             },
-            "fc2": {
-                "weight": t2l(layer.ff.fc2.weight),
-                "bias": t2l(layer.ff.fc2.bias)
+            "attn": {
+                "W_q": t2l(layer.attn.W_q.weight),
+                "W_k": t2l(layer.attn.W_k.weight),
+                "W_v": t2l(layer.attn.W_v.weight),
+                "W_o": t2l(layer.attn.W_o.weight)
+            },
+            "norm2": {
+                "weight": t2l(layer.norm2.weight),
+                "bias": t2l(layer.norm2.bias)
+            },
+            "ff": {
+                "fc1": {
+                    "weight": t2l(layer.ff.fc1.weight),
+                    "bias": t2l(layer.ff.fc1.bias)
+                },
+                "fc2": {
+                    "weight": t2l(layer.ff.fc2.weight),
+                    "bias": t2l(layer.ff.fc2.bias)
+                }
             }
         }
+        weights["layers"].append(layer_weights)
+
+    weights["norm"] = {
+        "weight": t2l(model.norm.weight),
+        "bias": t2l(model.norm.bias)
     }
-    weights["layers"].append(layer_weights)
+    weights["fc_out"] = {
+        "weight": t2l(model.fc_out.weight),
+        "bias": t2l(model.fc_out.bias)
+    }
 
-weights["norm"] = {
-    "weight": t2l(model.norm.weight),
-    "bias": t2l(model.norm.bias)
-}
-weights["fc_out"] = {
-    "weight": t2l(model.fc_out.weight),
-    "bias": t2l(model.fc_out.bias)
-}
+    return weights
 
-with open("web/src/model_weights.json", "w") as f:
-    json.dump(weights, f, indent=2)
 
-print("Export completed successfully!")
+def main():
+    train_inputs, train_targets = create_dataset(30000)
+    val_inputs, val_targets = create_dataset(5000)
+
+    train_loader = DataLoader(TensorDataset(train_inputs, train_targets), batch_size=256, shuffle=True)
+    val_loader = DataLoader(TensorDataset(val_inputs, val_targets), batch_size=256, shuffle=False)
+
+    model_configs = [
+        {"n_layers": 1, "n_heads": 1, "key": "1l_1h"},
+        {"n_layers": 1, "n_heads": 2, "key": "1l_2h"},
+        {"n_layers": 2, "n_heads": 2, "key": "2l_2h"},
+    ]
+
+    all_weights = {}
+
+    for cfg in model_configs:
+        set_seed(42) # Reproducible training
+        weights = train_and_export_model(cfg["n_layers"], cfg["n_heads"], cfg["key"], train_loader, val_loader)
+        all_weights[cfg["key"]] = weights
+
+    os.makedirs("web/src", exist_ok=True)
+    with open("web/src/model_weights.json", "w") as f:
+        json.dump(all_weights, f, indent=2)
+
+    print("\nAll model weights exported successfully to web/src/model_weights.json!")
+
+if __name__ == "__main__":
+    main()
