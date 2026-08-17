@@ -134,7 +134,7 @@ export default function ResearchQuestionsPanel({ trace }: ResearchQuestionsPanel
               </div>
               <div className="flex justify-between">
                 <span>Head 1 (Local Spatial):</span>
-                <span className="text-cyan-400">Step adjacency & walls</span>
+                <span className="text-cyan-400">Step adjacency &amp; walls</span>
               </div>
             </div>
             <p className="text-[11px] text-zinc-400 mt-2 leading-relaxed">
@@ -170,7 +170,7 @@ export default function ResearchQuestionsPanel({ trace }: ResearchQuestionsPanel
               <tr>
                 <td className="py-2.5 px-3 font-sans font-semibold text-zinc-400">Spatial Routing Scope</td>
                 <td className="py-2.5 px-3 text-indigo-300">Local (1-hop neighbors)</td>
-                <td className="py-2.5 px-3 text-amber-300">Global (other junctions & goal)</td>
+                <td className="py-2.5 px-3 text-amber-300">Global (other junctions &amp; goal)</td>
               </tr>
               <tr>
                 <td className="py-2.5 px-3 font-sans font-semibold text-zinc-400">Goal Query Interaction</td>
@@ -272,7 +272,7 @@ export default function ResearchQuestionsPanel({ trace }: ResearchQuestionsPanel
           {/* Explanation Callout */}
           <div className="lg:col-span-5 bg-zinc-950 p-4 rounded-xl border border-zinc-850 flex flex-col justify-between h-full space-y-3">
             <h4 className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
-              <Target className="w-4 h-4 text-cyan-400" /> Spatial Masking & Topological Allocation Findings
+              <Target className="w-4 h-4 text-cyan-400" /> Spatial Masking &amp; Topological Allocation Findings
             </h4>
             <div className="space-y-2 text-[11px] text-zinc-400 leading-relaxed">
               <p>

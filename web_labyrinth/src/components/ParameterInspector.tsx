@@ -1,11 +1,104 @@
 import { useState, useMemo } from 'react';
 import { Cpu, Search, Database, Layers } from 'lucide-react';
-import { getNetworkParameterDetails } from '../model/transformer';
+import { getRawWeights } from '../model/labyrinth_transformer';
+
+export interface TensorInfo {
+  id: string;
+  name: string;
+  group: string;
+  shape: number[];
+  paramCount: number;
+  data: number[] | number[][];
+  min: number;
+  max: number;
+  mean: number;
+  std: number;
+}
+
+export function getNetworkParameterDetails(): {
+  tensors: TensorInfo[];
+  totalParams: number;
+  groupBreakdown: { group: string; count: number }[];
+} {
+  const weights = getRawWeights();
+  const tensors: TensorInfo[] = [];
+
+  const addTensor = (id: string, name: string, group: string, shape: number[], data: number[] | number[][]) => {
+    const flat: number[] = [];
+    if (Array.isArray(data[0])) {
+      (data as number[][]).forEach(row => flat.push(...row));
+    } else {
+      flat.push(...(data as number[]));
+    }
+
+    const paramCount = flat.length;
+    let min = Infinity;
+    let max = -Infinity;
+    let sum = 0;
+
+    for (let i = 0; i < flat.length; i++) {
+      const v = flat[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+      sum += v;
+    }
+    const mean = sum / (paramCount || 1);
+
+    let varSum = 0;
+    for (let i = 0; i < flat.length; i++) {
+      varSum += Math.pow(flat[i] - mean, 2);
+    }
+    const std = Math.sqrt(varSum / (paramCount || 1));
+
+    tensors.push({ id, name, group, shape, paramCount, data, min, max, mean, std });
+  };
+
+  addTensor('grid_embedding', 'Grid Cell Token Embedding (W_grid)', 'Embeddings', [6, 32], weights.gridEmbedding);
+  addTensor('spatial_pe', '2D Spatial Positional Embedding (PE)', 'Embeddings', [36, 32], weights.spatialPE);
+
+  weights.layers.forEach((lw, idx) => {
+    const lName = `Layer ${idx + 1}`;
+    addTensor(`l${idx}_norm1_w`, `${lName} - LayerNorm 1 Weight`, lName, [32], lw.norm1.weight);
+    addTensor(`l${idx}_norm1_b`, `${lName} - LayerNorm 1 Bias`, lName, [32], lw.norm1.bias);
+
+    addTensor(`l${idx}_attn_q`, `${lName} - Attention Query Projection (W_q)`, lName, [32, 32], lw.attn.W_q);
+    addTensor(`l${idx}_attn_k`, `${lName} - Attention Key Projection (W_k)`, lName, [32, 32], lw.attn.W_k);
+    addTensor(`l${idx}_attn_v`, `${lName} - Attention Value Projection (W_v)`, lName, [32, 32], lw.attn.W_v);
+    addTensor(`l${idx}_attn_o`, `${lName} - Attention Output Projection (W_o)`, lName, [32, 32], lw.attn.W_o);
+
+    addTensor(`l${idx}_norm2_w`, `${lName} - LayerNorm 2 Weight`, lName, [32], lw.norm2.weight);
+    addTensor(`l${idx}_norm2_b`, `${lName} - LayerNorm 2 Bias`, lName, [32], lw.norm2.bias);
+
+    addTensor(`l${idx}_ff1_w`, `${lName} - FFN FC1 Weight`, lName, [64, 32], lw.ff.fc1.weight);
+    addTensor(`l${idx}_ff1_b`, `${lName} - FFN FC1 Bias`, lName, [64], lw.ff.fc1.bias);
+    addTensor(`l${idx}_ff2_w`, `${lName} - FFN FC2 Weight`, lName, [32, 64], lw.ff.fc2.weight);
+    addTensor(`l${idx}_ff2_b`, `${lName} - FFN FC2 Bias`, lName, [32], lw.ff.fc2.bias);
+  });
+
+  addTensor('final_norm_w', 'Final LayerNorm Weight', 'Final LayerNorm', [32], weights.norm.weight);
+  addTensor('final_norm_b', 'Final LayerNorm Bias', 'Final LayerNorm', [32], weights.norm.bias);
+
+  addTensor('fc_dir_w', 'Directional Classifier Output Weight (W_dir)', 'Classifier FC', [4, 32], weights.fc_dir.weight);
+  addTensor('fc_dir_b', 'Directional Classifier Output Bias (b_dir)', 'Classifier FC', [4], weights.fc_dir.bias);
+
+  let totalParams = 0;
+  const groupMap = new Map<string, number>();
+
+  tensors.forEach(t => {
+    totalParams += t.paramCount;
+    const current = groupMap.get(t.group) || 0;
+    groupMap.set(t.group, current + t.paramCount);
+  });
+
+  const groupBreakdown = Array.from(groupMap.entries()).map(([group, count]) => ({ group, count }));
+
+  return { tensors, totalParams, groupBreakdown };
+}
 
 export default function ParameterInspector() {
   const { tensors, totalParams, groupBreakdown } = useMemo(() => getNetworkParameterDetails(), []);
 
-  const [selectedTensorId, setSelectedTensorId] = useState<string>('embedding');
+  const [selectedTensorId, setSelectedTensorId] = useState<string>('grid_embedding');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
   const [hoveredCell, setHoveredCell] = useState<{ r: number; c: number; val: number } | null>(null);
 
@@ -26,13 +119,11 @@ export default function ParameterInspector() {
     const norm = Math.min(1, Math.max(-1, val / absMax));
 
     if (norm >= 0) {
-      // Positive: Purple / Indigo
       const r = Math.round(24 + norm * 100);
       const g = Math.round(24 + norm * 80);
       const b = Math.round(36 + norm * 200);
       return `rgb(${r}, ${g}, ${b})`;
     } else {
-      // Negative: Rose / Orange
       const absNorm = Math.abs(norm);
       const r = Math.round(36 + absNorm * 200);
       const g = Math.round(24 + absNorm * 60);
@@ -49,7 +140,7 @@ export default function ParameterInspector() {
             <Cpu className="w-5 h-5 text-indigo-400" /> Full Network Parameter Inspector
           </h2>
           <p className="text-xs text-zinc-400 mt-1">
-            Deep-dive into every parameter tensor, layer shape, and weight matrix across the model.
+            Deep-dive into every parameter tensor, layer shape, and weight matrix across the Labyrinth Transformer model.
           </p>
         </div>
 
@@ -274,7 +365,7 @@ export default function ParameterInspector() {
 
           <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500 pt-2 border-t border-zinc-900">
             <span>Color Scale: Rose (- negative) &bull; Dark (0) &bull; Indigo/Purple (+ positive)</span>
-            <span>Weights loaded from model_weights.json</span>
+            <span>Deterministic weights loaded in memory</span>
           </div>
         </div>
       </div>
