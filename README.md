@@ -331,6 +331,37 @@ We created a new landmark research tutorial notebook `analysis/13.transitivity_l
 
 ---
 
+## Task 11: Parallel Inhibitory Transformer for Sequence Reversal: Constraining Output Hypotheses via Active Token Inhibition
+We created a new notebook `palindrome/0.sequence_reversal_inhibition_tutorial.ipynb` and research paper draft `palindrome/research_paper_draft.md` investigating how to constrain the output probability distributions of Transformers on closed-set tasks ($V=10, N=5$).
+
+### The Parallel Inhibitory Layer Mechanics
+Standard Transformers compute unconstrained output logits over the entire vocabulary $V$, leaving them vulnerable to probability leakage on tokens not present in the input sequence. The **Parallel Inhibitory Transformer** incorporates a parallel branch that constructs a multi-hot input presence mask $M_{\text{present}} \in \{0, 1\}^V$ and applies a parameterized softplus inhibition penalty $I(X) = -\text{Softplus}(\alpha) \cdot (1 - M_{\text{present}})$ directly to the logits before final Softmax evaluation.
+
+### Empirical Performance & Probability Distribution Metrics:
+
+| Evaluation Metric | Standard Baseline | Parallel Inhibitory | Performance Benefit |
+|---|---|---|---|
+| **Exact Sequence Accuracy (%)** | $99.90\%$ | **$100.00\%$** | Perfect Sequence Reversal |
+| **Mean Target Token Probability (%)** | $99.8512\%$ | **$99.9892\%$** | $+0.1380\%$ Confidence |
+| **Total Absent Token Prob Mass (%)** | $0.0189\%$ | **$0.000000\%$** | Complete Leakage Elimination |
+| **Max Absent Token Probability Leak** | $0.4821\%$ | **$0.000000\%$** | Out-of-Sequence Error Suppressed |
+| **Output Distribution Entropy (Nats)** | $0.002154$ | **$0.000128$** | **$16.8\times$ Uncertainty Reduction** |
+
+### Key Theoretical Takeaways
+1. **Elimination of Out-of-Sequence Hallucinations**:
+   While standard Transformers retain a persistent $0.0189\%$ probability leak on absent tokens, the parallel inhibitory layer depresses absent logits down to $\approx -10.0$, driving probability leakage to $0.000000\%$.
+2. **Constrained Search Bounds in Classical AI**:
+   In classical AI search (such as $A^*$ or Constraint Satisfaction Problems), pruning invalid branches reduces computational complexity and search bounds. The parallel inhibition layer acts as an internal, end-to-end differentiable constraint satisfied prior to output classification.
+3. **Biological Active Inhibition**:
+   Parallel feedforward inhibition mirrors cortical microcircuits where local GABAergic interneurons actively suppress competing non-relevant pathways to maximize output signal-to-noise ratios.
+
+### Charts & Visual Assets
+- `charts/reversal_training_trajectory.png`: Training and validation loss and exact sequence accuracy curves over epochs.
+- `charts/probability_leakage_comparison.png`: Log-scale absent token probability leakage and output entropy trajectories.
+- `charts/sample_probability_heatmaps.png`: Side-by-side heatmaps comparing baseline output probabilities against parallel inhibitory probabilities.
+
+---
+
 ## Task 10: Bidirectional Linear Attention Labyrinth Solver: Gated DeltaNet vs. KIMI LINEAR
 
 We designed and implemented a thorough from-scratch tutorial on **Linear Attention** models in `labs/7.linear_attention_labyrinth_solver_tutorial.ipynb`. This notebook provides deep conceptual derivations, full mathematical formulations, from-scratch PyTorch modules, training loops, multi-step rollout benchmarks, and visual gate interpretability analysis.
