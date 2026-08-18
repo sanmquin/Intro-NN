@@ -1,30 +1,41 @@
 import { useState, useMemo } from 'react';
-import { Sparkles, Brain, Cpu, RefreshCw, BarChart2, Network, Database, Layers } from 'lucide-react';
-import { runInference, getMagnitudeBilinearScores } from './model/transformer';
+import { Sparkles, Brain, Cpu, RefreshCw, Network, Database, Layers, CheckCircle2 } from 'lucide-react';
+import {
+  ModelKey,
+  MODEL_CONFIGS,
+  runInference,
+  getNetworkParameterDetails,
+} from './model/transformer';
 import AttentionHeatmap from './components/AttentionHeatmap';
 import ArchitectureDiagram from './components/ArchitectureDiagram';
 import MathExplainer from './components/MathExplainer';
 import EmbeddingScatterPlot from './components/EmbeddingScatterPlot';
 import ParameterInspector from './components/ParameterInspector';
 import LogitInfluenceVisualizer from './components/LogitInfluenceVisualizer';
+import LearnedOrderingBiasCard from './components/LearnedOrderingBiasCard';
+import EducationalStepper from './components/EducationalStepper';
 
 type MainTab = 'attention' | 'embeddings' | 'parameters' | 'influence';
 
 export default function App() {
+  const [modelKey, setModelKey] = useState<ModelKey>('1l_2h');
   const [inputTokens, setInputTokens] = useState<number[]>([4, 2, 8, 1, 3]);
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
   const [selectedHead, setSelectedHead] = useState<number>(0);
   const [activeMathBlock, setActiveMathBlock] = useState<string>('layer1');
   const [hoveredTokenIdx, setHoveredTokenIdx] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<MainTab>('attention');
+  const [currentStepId, setCurrentStepId] = useState<string>('step_3_attention');
 
   const trace = useMemo(() => {
-    return runInference(inputTokens);
-  }, [inputTokens]);
+    return runInference(inputTokens, modelKey);
+  }, [inputTokens, modelKey]);
 
-  const magnitudeMatrix = useMemo(() => {
-    return getMagnitudeBilinearScores();
-  }, []);
+  const networkDetails = useMemo(() => {
+    return getNetworkParameterDetails(modelKey);
+  }, [modelKey]);
+
+  const activeModelConfig = MODEL_CONFIGS[modelKey];
 
   const presets = [
     { name: 'Mixed Random', seq: [4, 2, 8, 1, 3] },
@@ -43,59 +54,87 @@ export default function App() {
     setInputTokens(updated);
   };
 
+  const handleModelChange = (key: ModelKey) => {
+    setModelKey(key);
+    setSelectedLayer(0);
+    setSelectedHead(0);
+    setActiveMathBlock('layer1');
+  };
+
+  const handleStepSelect = (stepId: string) => {
+    setCurrentStepId(stepId);
+    if (stepId === 'step_1_embed') setActiveMathBlock('embed');
+    else if (stepId === 'step_2_projections' || stepId === 'step_3_attention' || stepId === 'step_4_ffn') setActiveMathBlock('layer1');
+    else if (stepId === 'step_5_logits') setActiveMathBlock('output');
+    else if (stepId === 'step_6_weights') setActiveTab('embeddings');
+  };
+
   const onSelectHead = (layer: number, head: number) => {
     setSelectedLayer(layer);
     setSelectedHead(head);
     setActiveMathBlock(layer === 0 ? 'layer1' : 'layer2');
   };
 
-  const getBilinearCellColor = (val: number, min: number, max: number) => {
-    const norm = (val - min) / (max - min || 1);
-    const r = Math.round(16 + norm * 20);
-    const g = Math.round(24 + norm * 160);
-    const b = Math.round(32 + norm * 180);
-    return `rgb(${r}, ${g}, ${b})`;
-  };
-
-  const magnitudeMinMax = useMemo(() => {
-    let min = Infinity;
-    let max = -Infinity;
-    magnitudeMatrix.forEach(row => {
-      row.forEach(v => {
-        if (v < min) min = v;
-        if (v > max) max = v;
-      });
-    });
-    return { min, max };
-  }, [magnitudeMatrix]);
-
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-indigo-500/30 selection:text-indigo-200">
 
-      <header className="border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30 px-6 py-4 flex items-center justify-between">
+      <header className="border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-30 px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-gradient-to-br from-indigo-500 to-violet-500 rounded-xl shadow-[0_0_15px_rgba(99,102,241,0.25)]">
             <Brain className="w-5 h-5 text-white" />
           </div>
           <div>
             <h1 className="text-md font-bold tracking-tight bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
-              Transformer Attention Visualizer
+              Transformer Attention Visualizer & Educational Guide
             </h1>
             <p className="text-[10px] text-zinc-500 font-medium">
-              Interactive Interpretability & Numerical Forward Trace
+              Interactive Interpretability, Ground-Up Matrix Derivations & Model Architecture Explorer
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-indigo-500/10 border border-indigo-500/25 text-indigo-400 flex items-center gap-1">
-            <Cpu className="w-2.5 h-2.5" /> Trained Sorter Model
+        {/* Model Selector Bar */}
+        <div className="flex flex-wrap items-center gap-2 bg-zinc-900/90 p-1.5 rounded-xl border border-zinc-800">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 px-2 flex items-center gap-1">
+            <Cpu className="w-3 h-3 text-indigo-400" /> Architecture:
           </span>
-          <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-500/10 border border-emerald-500/25 text-emerald-400">
-            Accuracy: 99.9%
-          </span>
+
+          {(Object.keys(MODEL_CONFIGS) as ModelKey[]).map((key) => {
+            const cfg = MODEL_CONFIGS[key];
+            const isSelected = modelKey === key;
+            return (
+              <button
+                key={key}
+                onClick={() => handleModelChange(key)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  isSelected
+                    ? 'bg-indigo-500 text-white shadow-[0_0_12px_rgba(99,102,241,0.35)]'
+                    : 'bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800/80'
+                }`}
+              >
+                {isSelected && <CheckCircle2 className="w-3 h-3 text-emerald-300" />}
+                <span>{cfg.layers}L-{cfg.heads}H</span>
+                <span className="text-[9px] font-mono text-zinc-400 opacity-80">
+                  ({cfg.key === '1l_1h' ? '1 Head' : cfg.key === '1l_2h' ? '2 Heads' : '2 Layers'})
+                </span>
+              </button>
+            );
+          })}
         </div>
       </header>
+
+      {/* Model Active Description Info Banner */}
+      <div className="bg-zinc-900/40 border-b border-zinc-900 px-6 py-2.5 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between text-xs text-zinc-400 gap-2">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-zinc-200">{activeModelConfig.name}:</span>
+          <span>{activeModelConfig.description}</span>
+        </div>
+        <div className="flex items-center gap-3 font-mono text-[11px] shrink-0">
+          <span className="text-emerald-400 font-bold">Accuracy: 99.9%</span>
+          <span className="text-zinc-500">&bull;</span>
+          <span className="text-indigo-400">{networkDetails.totalParams.toLocaleString()} parameters</span>
+        </div>
+      </div>
 
       {/* Main Navigation Tabs */}
       <div className="bg-zinc-950/60 border-b border-zinc-900 sticky top-[65px] z-20 px-6 py-2.5 backdrop-blur-md">
@@ -148,11 +187,20 @@ export default function App() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
 
+        {activeTab === 'attention' && (
+          <section>
+            <EducationalStepper
+              currentStepId={currentStepId}
+              onSelectStep={handleStepSelect}
+            />
+          </section>
+        )}
+
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="bg-zinc-900/40 border border-zinc-900 rounded-xl p-5 flex flex-col justify-between">
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500 mb-1.5 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Presets
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> Sequence Presets
               </h3>
               <p className="text-[11px] text-zinc-400 leading-relaxed mb-4">
                 Choose any pre-configured sequence to test edge cases or reversed arrays.
@@ -238,68 +286,20 @@ export default function App() {
             />
           </div>
 
-          <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-6 backdrop-blur-sm flex flex-col justify-between">
-            <div>
-              <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2 mb-1.5">
-                <BarChart2 className="w-4 h-4 text-cyan-400" /> learned Ordering Bias
-              </h3>
-              <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-                Bilinear Query-Key magnitude weights matrix:
-                {" $$\\mathbf{Bias}(u, v) = \\mathbf{e}_u \\mathbf{W}_q \\mathbf{W}_k^T \\mathbf{e}_v^T$$"}
-                The diagonal pattern demonstrates that the model maps integers on a continuous numerical scale, aligning matching magnitudes.
-              </p>
-            </div>
-
-            <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-900 flex flex-col items-center">
-              <div className="flex pl-6 mb-1 w-full justify-between text-[9px] font-mono text-zinc-500">
-                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => (
-                  <span key={i} className="w-4 text-center">{i}</span>
-                ))}
-              </div>
-
-              <div className="flex w-full">
-                <div className="flex flex-col pr-1.5 justify-between text-[9px] font-mono text-zinc-500 w-6 text-right">
-                  {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => (
-                    <span key={i} className="h-4 flex items-center justify-end">{i}</span>
-                  ))}
-                </div>
-
-                <div className="grid grid-cols-10 gap-0.5 flex-1 p-1 bg-zinc-900 border border-zinc-800 rounded">
-                  {magnitudeMatrix.map((row, uIdx) =>
-                    row.map((val, vIdx) => {
-                      return (
-                        <div
-                          key={`${uIdx}-${vIdx}`}
-                          title={`Bilinear Score (${uIdx}, ${vIdx}): ${val.toFixed(2)}`}
-                          style={{
-                            backgroundColor: getBilinearCellColor(val, magnitudeMinMax.min, magnitudeMinMax.max),
-                          }}
-                          className="w-full aspect-square rounded-[1px] hover:ring-1 hover:ring-white transition-all cursor-crosshair"
-                        />
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-4 p-3 bg-zinc-950/60 border border-zinc-850/80 rounded-lg text-[10px] text-zinc-500 leading-relaxed">
-              *Computed directly from Layer 1 weight parameters. The self-attention matrix converges to this continuous, diagonally-aligned magnitude bias.
-            </div>
+          <div>
+            <LearnedOrderingBiasCard modelKey={modelKey} />
           </div>
         </section>
 
         {activeTab === 'attention' && (
-          <>
-            <section>
-              <MathExplainer
-                trace={trace}
-                selectedLayer={selectedLayer}
-                selectedHead={selectedHead}
-                activeMathBlock={activeMathBlock}
-              />
-            </section>
-          </>
+          <section>
+            <MathExplainer
+              trace={trace}
+              selectedLayer={selectedLayer}
+              selectedHead={selectedHead}
+              activeMathBlock={activeMathBlock}
+            />
+          </section>
         )}
 
         {activeTab === 'embeddings' && (
@@ -324,7 +324,7 @@ export default function App() {
 
       <footer className="border-t border-zinc-900 bg-zinc-950/60 py-6 px-6 text-center text-xs text-zinc-500">
         <p className="max-w-2xl mx-auto leading-relaxed">
-          This visualizer illustrates how a Transformer encoder learns to route elements transitively based on contextual inputs. By dissecting Q, K, and V spaces, students and engineers can trace the exact mechanism of self-attention.
+          This visualizer illustrates how Transformer encoders learn to route elements transitively based on contextual inputs. Dissect Q, K, and V spaces, inspect ground-up cell matrix derivations, and compare 1-layer vs 2-layer architectures.
         </p>
         <p className="mt-2 text-[10px] text-zinc-600 font-mono">
           Made with ✨ for educational research. Deployed to Netlify.
