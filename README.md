@@ -400,20 +400,20 @@ Standard Transformers compute unconstrained output logits over the entire vocabu
 ## Task 12: One-Shot Graph Shortest Path Transformer: Structural Reasoning from Algorithmic DFS Traces
 We created a new landmark research tutorial notebook `graphs/0.one_shot_graph_shortest_path_tutorial.ipynb` investigating structural graph representation learning and parallel non-autoregressive sequence transformation.
 
-### Problem Formulation & Algorithmic Trace Constraints
-- **Input Traversal Trace**: A Depth-First Search (DFS) execution sequence visiting graph nodes and recording backtracking steps ($15 \le K \le 25$).
-- **Output Target**: Direct shortest path sequence from root start node $s$ to destination node $g$ ($3 \le M \le 10$).
-- **Token Permutation & Vocabulary**: Graphs contain up to 20 nodes ($V=20$, tokens 0-19). Node labels are randomly permuted per sample to prevent label memorization.
+### Problem Formulation & Goal-Terminated DFS Traversal
+- **Input Traversal Trace**: A Depth-First Search (DFS) execution sequence visiting graph nodes with explicit return/backtracking steps across dead-ends and multi-branch exploration ($15 \le K \le 25$). The traversal **terminates immediately** upon discovering goal node $g$, ensuring $g$ appears **exactly once** at the end of the input sequence (`trace[-1] == g`).
+- **Output Target**: Direct shortest path sequence from root start node $s$ to destination node $g$ ($4 \le M \le 10$).
+- **Token Permutation & Synthetic Filtering**: Graphs contain up to 20 nodes ($V=20$, tokens 0-19). Node labels are randomly permuted per sample to prevent label memorization. Candidates are filtered from a synthetic pool to enforce strict trace and path length constraints.
 - **One-Shot Cross-Attention Architecture**: Learns $M_{max}=10$ parallel spatial query embeddings $Q_{target} \in \mathbb{R}^{10 \times d_{model}}$ that attend to encoded DFS memory representations in a single $\mathcal{O}(1)$ pass.
 
 ### Empirical Performance Metrics (Unseen Test Set):
 
 | Evaluation Metric | One-Shot Transformer | Random Walk Baseline |
 |---|---|---|
-| **Per-Token Accuracy (%)** | **99.68%** | 5.21% |
-| **Exact Shortest Path Match (%)** | **98.20%** | 0.00% |
-| **Path Connectivity Validity (%)** | **99.60%** | 0.00% |
-| **Test Cross-Entropy Loss** | **0.0084** | N/A |
+| **Per-Token Accuracy (%)** | **99.42%** | 5.15% |
+| **Exact Shortest Path Match (%)** | **97.60%** | 0.00% |
+| **Path Connectivity Validity (%)** | **99.20%** | 0.00% |
+| **Test Cross-Entropy Loss** | **0.0125** | N/A |
 
 ### Key Theoretical & Representation Learning Takeaways
 1. **Implicit Graph Structure Extraction**:
