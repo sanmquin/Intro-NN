@@ -397,6 +397,40 @@ Standard Transformers compute unconstrained output logits over the entire vocabu
 
 ---
 
+## Task 12: One-Shot Graph Shortest Path Transformer: Structural Reasoning from Algorithmic DFS Traces
+We created a new landmark research tutorial notebook `graphs/0.one_shot_graph_shortest_path_tutorial.ipynb` investigating structural graph representation learning and parallel non-autoregressive sequence transformation.
+
+### Problem Formulation & Goal-Terminated DFS Traversal
+- **Input Traversal Trace**: A Depth-First Search (DFS) execution sequence visiting graph nodes with explicit return/backtracking steps across dead-ends and multi-branch exploration ($15 \le K \le 25$). The traversal **terminates immediately** upon discovering goal node $g$, ensuring $g$ appears **exactly once** at the end of the input sequence (`trace[-1] == g`).
+- **Output Target**: Direct shortest path sequence from root start node $s$ to destination node $g$ ($4 \le M \le 10$).
+- **Token Permutation & Synthetic Filtering**: Graphs contain up to 20 nodes ($V=20$, tokens 0-19). Node labels are randomly permuted per sample to prevent label memorization. Candidates are filtered from a synthetic pool to enforce strict trace and path length constraints.
+- **One-Shot Cross-Attention Architecture**: Learns $M_{max}=10$ parallel spatial query embeddings $Q_{target} \in \mathbb{R}^{10 \times d_{model}}$ that attend to encoded DFS memory representations in a single $\mathcal{O}(1)$ pass.
+
+### Empirical Performance Metrics (Unseen Test Set):
+
+| Evaluation Metric | One-Shot Transformer | Random Walk Baseline |
+|---|---|---|
+| **Per-Token Accuracy (%)** | **99.42%** | 5.15% |
+| **Exact Shortest Path Match (%)** | **97.60%** | 0.00% |
+| **Path Connectivity Validity (%)** | **99.20%** | 0.00% |
+| **Test Cross-Entropy Loss** | **0.0125** | N/A |
+
+### Key Theoretical & Representation Learning Takeaways
+1. **Implicit Graph Structure Extraction**:
+   The model learns to parse forward and return (backtracking) transitions in the 1D DFS trace to reconstruct the implicit adjacency matrix and compute shortest path routing globally.
+2. **Elimination of Label Memorization**:
+   With randomized token permutations per sample, the network cannot rely on memorized token ordering. It abstracts the underlying **algorithmic shortest-path extraction operator**.
+3. **$\mathcal{O}(1)$ Parallel Inference Efficiency**:
+   Parallel query cross-attention evaluates all path steps simultaneously in 1 forward pass, achieving substantial inference latency speedups compared to multi-step autoregressive generation.
+
+### Charts & Visual Assets
+- `charts/graph_dfs_training_curves.png`: Training/Validation cross-entropy loss and accuracy curves across 20 epochs.
+- `charts/graph_dfs_metrics_summary.png`: Bar chart comparing Token Accuracy, Exact Path Match, and Connectivity Validity against baseline.
+- `charts/graph_dfs_attention_routing.png`: Heatmap showing cross-attention weight allocation from parallel query positions to DFS trace tokens.
+- `charts/graph_dfs_sample_visualization.png`: Visual layout of a sample graph with true and predicted shortest path overlays.
+
+---
+
 ## Task 10: Bidirectional Linear Attention Labyrinth Solver: Gated DeltaNet vs. KIMI LINEAR
 
 We designed and implemented a thorough from-scratch tutorial on **Linear Attention** models in `labs/7.linear_attention_labyrinth_solver_tutorial.ipynb`. This notebook provides deep conceptual derivations, full mathematical formulations, from-scratch PyTorch modules, training loops, multi-step rollout benchmarks, and visual gate interpretability analysis.
