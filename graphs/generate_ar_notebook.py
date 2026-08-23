@@ -7,28 +7,28 @@ def build_ar_notebook():
 
     # Title & Introduction
     title_md = """# 1. Step-by-Step Autoregressive Graph Shortest Path Transformer
-## Sequential Causal Sequence-to-Sequence Modeling for Random Walk Algorithmic Execution Traces
+## Sequential Causal Sequence-to-Sequence Modeling for Algorithmic Traversal Traces
 
 ### Executive Summary & Educational Motivation
-Extracting structural shortest path information from complex, noisy algorithmic execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
+Extracting structural path information from complex execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
 
-In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on goal-terminated **Random Walk** traces ($100 \\le K \\le 200$, target path $20 \\le M \\le 50$). The notebook features configurable switching between **Easy** and **Hard** dataset flavors, as well as prefix-based checkpoint organization supporting multiple network sizes and datasets.
+In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** capable of training on goal-terminated **DFS** or **Random Walk** traces (`rw_easy` and `rw_hard`). The notebook features configurable switching between dataset flavors as well as prefix-based checkpoint organization supporting multiple network sizes and datasets.
 
 ---
 
 ### Mathematical Problem Formulation
 
-#### 1. Input Random Walk Trace Encoding
-Given an input Random Walk traversal trace $T = [t_1, t_2, \\dots, t_K]$ ($100 \\le K \\le 200$) where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
+#### 1. Input Trace Encoding
+Given an input traversal trace $T = [t_1, t_2, \\dots, t_K]$ where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
 $$H_{src} = \\text{Encoder}\\Big(E(T) + P(T)\\Big) \\in \\mathbb{R}^{K \\times d_{model}}$$
 
 #### 2. Causal Autoregressive Decoding & Plan Mechanics
-The target shortest path $P^* = [p_1^*, p_2^*, \\dots, p_M^*]$ ($20 \\le M \\le 50$) is predicted sequentially. At step $m$, given previous tokens $p_{<m}^* = [p_1^*, \\dots, p_{m-1}^*]$, the Decoder predicts:
+The target shortest path $P^* = [p_1^*, p_2^*, \\dots, p_M^*]$ is predicted sequentially. At step $m$, given previous tokens $p_{<m}^* = [p_1^*, \\dots, p_{m-1}^*]$, the Decoder predicts:
 $$P(p_m^* \\mid p_{<m}^*, T) = \\text{Softmax}\\Bigg(\\text{FC}\\bigg(\\text{Decoder}\\Big(E(p_{<m}^*) + P(p_{<m}^*), H_{src}, M_{causal}\\Big)\\bigg)\\Bigg)$$
 where $M_{causal}$ is a causal triangular mask preventing lookahead to future target positions ($m' \\ge m$).
 
 #### 3. Good Plan vs. Bad Plan Mechanics & Compounding Errors
-In long-horizon sequential rollout ($M \\in [20, 50]$):
+In long-horizon sequential rollout:
 - **Good Plan**: Every predicted token $p_m$ is an adjacent valid node on $G$, maintaining valid path connectivity toward goal $g$.
 - **Bad Plan & Regressions**: A single incorrect token $p_m$ shifts autoregressive context into out-of-distribution space, causing **compounding errors** where subsequent step predictions fail or hallucinate non-existent edges. The probability of sequence failure scales as $1 - (1 - \\epsilon)^M$.
 """
@@ -75,9 +75,9 @@ def set_seed(seed=42):
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Config dictionary with dataset switching and model/checkpoint prefix options
+# Config dictionary supporting dataset switching and prefix checkpoint naming
 config = {
-    "dataset_flavor": "easy",       # Options: "easy" or "hard"
+    "dataset_flavor": "rw_easy",    # Options: "dfs", "rw_easy", or "rw_hard"
     "dataset_prefix": "rw_easy",    # Dataset name prefix for checkpoint filenames
     "model_size": "d64_l2_h4",      # Identifier for network size and architecture
     "restart_training": False,     # Set to True to skip existing checkpoints and start fresh
@@ -91,8 +91,15 @@ config = {
     "batch_size": 64
 }
 
-# Resolve paths based on config dataset_flavor and dataset_prefix
-dataset_filename = f"graph_{config['dataset_prefix']}_dataset.pt" if "rw" in config['dataset_prefix'] else f"graph_rw_{config['dataset_flavor']}_dataset.pt"
+# Resolve dataset filename from config dataset_flavor
+if config["dataset_flavor"] == "dfs":
+    dataset_filename = "graph_dfs_dataset.pt"
+elif config["dataset_flavor"] in ("rw_easy", "easy"):
+    dataset_filename = "graph_rw_easy_dataset.pt"
+elif config["dataset_flavor"] in ("rw_hard", "hard"):
+    dataset_filename = "graph_rw_hard_dataset.pt"
+else:
+    dataset_filename = f"graph_{config['dataset_prefix']}_dataset.pt"
 
 def setup_drive_paths():
     try:
@@ -115,16 +122,14 @@ DATASET_PATH, CKPT_DIR = setup_drive_paths()
 
     # Cell 2: Dataset Loading
     cell2_md = """### Dataset Loading & PyTorch Dataset Class
-Loads the pre-generated Random Walk dataset ($100 \\le K \\le 200$, $20 \\le M \\le 50$).
-- `src`: Input Random Walk trace padded to `MAX_SRC_LEN=200` with `PAD_TOKEN=50`.
-- `tgt`: Shortest path with `STOP_TOKEN=51` padded to `MAX_TGT_LEN=51` with `PAD_TOKEN=50`.
+Loads dataset payload and dynamically extracts vocabulary and sequence bounds.
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Import Random Walk Dataset & Define PyTorch Dataset
+    cell2_code = """# Cell 2: Import Selected Dataset & Define PyTorch Dataset
 
 if not os.path.exists(DATASET_PATH):
-    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run Notebook 0 to generate the dataset.")
+    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset generation notebook first.")
 
 dataset_payload = torch.load(DATASET_PATH, weights_only=False)
 train_raw = dataset_payload['train']
@@ -137,7 +142,7 @@ STOP_TOKEN = dataset_payload.get('stop_token', 51)
 MAX_SRC_LEN = dataset_payload.get('max_src_len', 200)
 MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 51)
 
-class GraphRWARDataset(Dataset):
+class GraphARDataset(Dataset):
     def __init__(self, raw_data, max_src_len=MAX_SRC_LEN, max_tgt_len=MAX_TGT_LEN):
         self.samples = []
         self.raw_data = raw_data
@@ -185,24 +190,25 @@ def graph_ar_collate_fn(batch):
     node_backtraces = [item[8] for item in batch]
     return src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces
 
-train_dataset = GraphRWARDataset(train_raw)
-val_dataset = GraphRWARDataset(val_raw)
-test_dataset = GraphRWARDataset(test_raw)
+train_dataset = GraphARDataset(train_raw)
+val_dataset = GraphARDataset(val_raw)
+test_dataset = GraphARDataset(test_raw)
 
 train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=graph_ar_collate_fn)
 val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=graph_ar_collate_fn)
 test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=graph_ar_collate_fn)
 
-print(f"Datasets loaded successfully ({config['dataset_flavor'].upper()} flavor): Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"Datasets loaded successfully ({config['dataset_flavor'].upper()}): Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"Params: VOCAB_SIZE={VOCAB_SIZE}, MAX_SRC_LEN={MAX_SRC_LEN}, MAX_TGT_LEN={MAX_TGT_LEN}")
 """
     cells.append(nbf.v4.new_code_cell(cell2_code))
 
     # Cell 3: Model Architecture
     cell3_md = """### Step-by-Step Autoregressive Graph Transformer Architecture
 1. **Positional Encoding Layer**: Sinusoidal positional embeddings up to length 250.
-2. **Encoder**: 2-layer Multi-Head Self-Attention over padded input trace ($K \\le 200$).
-3. **Causal Decoder**: 2-layer Multi-Head Decoder with cross-attention and triangular causal mask ($M \\le 51$).
-4. **Output Head**: Linear projection to vocabulary logits $\\in \\mathbb{R}^{52}$.
+2. **Encoder**: 2-layer Multi-Head Self-Attention over padded input trace ($K \\le MAX\\_SRC\\_LEN$).
+3. **Causal Decoder**: 2-layer Multi-Head Decoder with cross-attention and triangular causal mask ($M \\le MAX\\_TGT\\_LEN$).
+4. **Output Head**: Linear projection to vocabulary logits $\\in \\mathbb{R}^{VOCAB\\_SIZE}$.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
@@ -521,7 +527,7 @@ print(f"\\nTraining chunk complete in {total_train_time:.2f} seconds.")
 
     # Cell 6: Test Benchmark
     cell6_md = """### Held-Out Test Set Evaluation
-Evaluates test accuracy on unseen traces ($100 \\le K \\le 200$, $20 \\le M \\le 50$).
+Evaluates test accuracy on unseen traces.
 """
     cells.append(nbf.v4.new_markdown_cell(cell6_md))
 
@@ -582,11 +588,11 @@ ax1.legend(lines, labels, loc='center right', frameon=True, facecolor='white', f
 plt.title(f"Autoregressive Transformer: Training Trajectories ({config['dataset_flavor'].upper()})", fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
 if os.path.basename(os.getcwd()) == "graphs":
-    plt.savefig("../charts/ar_graph_rw_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("charts/ar_graph_rw_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("../charts/ar_graph_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/ar_graph_training_curves.png", dpi=300, bbox_inches='tight')
 else:
-    plt.savefig("charts/ar_graph_rw_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("graphs/charts/ar_graph_rw_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/ar_graph_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("graphs/charts/ar_graph_training_curves.png", dpi=300, bbox_inches='tight')
 plt.show()
 
 print("Analytical figures generated and saved.")
@@ -595,10 +601,8 @@ print("Analytical figures generated and saved.")
 
     # Cell 8: Summary
     cell8_md = """### Self-Reflection & Summary
-1. **Random Walk Trajectory Processing**:
-   Evaluated sequence-to-sequence modeling over stochastic random walk traces of length $100 \\le K \\le 200$.
-2. **Multi-Dataset & Checkpoint Organization**:
-   The notebook seamlessly switches datasets via `config["dataset_flavor"]` and stores checkpoints using `dataset_prefix` and `model_size` naming convention.
+1. **Multi-Dataset Support**: Seamlessly trains on DFS (`graph_dfs_dataset.pt`), Random Walk Easy (`graph_rw_easy_dataset.pt`), or Random Walk Hard (`graph_rw_hard_dataset.pt`).
+2. **Multi-Checkpoint Organization**: Checkpoints are stored using prefixing tags (`dataset_prefix` and `model_size`), enabling parallel tracking of models across datasets and network sizes.
 """
     cells.append(nbf.v4.new_markdown_cell(cell8_md))
 
