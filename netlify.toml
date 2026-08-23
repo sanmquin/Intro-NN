@@ -1,4 +1,0 @@
-[build]
-  base = "web"
-  command = "npm install && npm run build"
-  publish = "dist"
