@@ -19,28 +19,21 @@ In this tutorial, we demonstrate that a **One-Shot (Non-Autoregressive) Transfor
 ### Mathematical Derivation & Problem Formulation
 
 #### 1. Graph Traversal and DFS Trace Representation
-Let $G = (V, E)$ be an undirected connected graph where $V$ is a set of $N$ nodes (where $N \\le 20$) labeled with randomized tokens from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 19\\}$.
+Let $G = (V, E)$ be an undirected connected graph where $V$ is a set of $N$ nodes ($20 \\le N \\le 35$) labeled with randomized tokens from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 39\\}$.
 
 A Depth-First Search (DFS) algorithm starting at root node $s \\in V$ explores the graph and **terminates immediately upon reaching destination node $g$**. The generated sequential traversal trace is:
 $$T = [t_1, t_2, \\dots, t_K]$$
 where $t_1 = s$, $t_K = g$, and $g$ appears **exactly once** at position $K$. Each adjacent transition $(t_k, t_{k+1})$ represents either a forward exploration step along an edge $e \\in E$ or a return step (backtracking to a parent node from a dead end or fully explored branch).
 
-The input sequence length $K$ satisfies $15 \\le K \\le 25$.
+The input sequence length $K$ satisfies $30 \\le K \\le 50$.
 
-#### 2. Implicit Graph Reconstruction
-The set of unique non-directed edges $E_T \\subseteq E$ exposed during the DFS trace is implicitly encoded in adjacent sequence pairs:
-$$E_T = \\Big\\{ \\{t_k, t_{k+1}\\} \\;\\Big\\vert\\; 1 \\le k \\le K-1, \\; t_k \\neq t_{k+1} \\Big\\}$$
-
-The adjacency matrix $A \\in \\{0, 1\\}^{N \\times N}$ of the traversed graph is given by:
-$$A_{uv} = \\mathbb{I}\\Big( \\{u, v\\} \\in E_T \\Big)$$
-
-#### 3. Shortest Path Target Operator
+#### 2. Shortest Path Target Operator
 Given the start node $s = t_1$ and destination node $g = t_K$, the target sequence is the shortest path sequence $P^*$:
 $$P^* = [p_1^*, p_2^*, \\dots, p_M^*, \\text{STOP}]$$
-where $p_1^* = s$, $p_M^* = g$, and $M$ is the minimum path length ($4 \\le M \\le 10$). $P^*$ minimizes $M$ subject to $A_{p_m^* p_{m+1}^*} = 1$ for all $1 \\le m < M$.
+where $p_1^* = s$, $p_M^* = g$, and $M$ is the minimum path length ($10 \\le M \\le 20$).
 
-#### 4. Parallel One-Shot Cross-Attention Mechanism
-Rather than predicting $P^*$ autoregressively token-by-token over $M$ sequential forward steps, the **One-Shot Transformer** utilizes $M_{max}=10$ learned positional query embeddings $Q \\in \\mathbb{R}^{M_{max} \\times d}$ to query the encoded DFS trace representations $H_{src} \\in \\mathbb{R}^{K \\times d}$:
+#### 3. Parallel One-Shot Cross-Attention Mechanism
+The **One-Shot Transformer** utilizes $M_{max}=21$ learned positional query embeddings $Q \\in \\mathbb{R}^{M_{max} \\times d}$ to query the encoded DFS trace representations $H_{src} \\in \\mathbb{R}^{K \\times d}$:
 
 $$\\text{Attention}(Q, K, V) = \\text{Softmax}\\left( \\frac{Q W_Q (H_{src} W_K)^T}{\\sqrt{d_k}} \\right) (H_{src} W_V)$$
 
@@ -50,7 +43,6 @@ All output tokens $p_1, p_2, \\dots, p_{M_{max}}$ are projected and predicted si
 
     # Cell 1: Setup & Environment
     cell1_code = """# Cell 1: Environment Setup and Random Seed Initialization
-# Documented Setup: Importing core scientific computing, visualization, and deep learning libraries.
 
 import os
 import random
@@ -64,11 +56,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import networkx as nx
 
-# Ensure charts directory exists
-os.makedirs("charts", exist_ok=True)
-os.makedirs("graphs/charts", exist_ok=True)
+# Ensure directories exist
+if os.path.basename(os.getcwd()) == "graphs":
+    os.makedirs("../charts", exist_ok=True)
+    os.makedirs("charts", exist_ok=True)
+    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
+else:
+    os.makedirs("charts", exist_ok=True)
+    os.makedirs("graphs/charts", exist_ok=True)
+    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
 
-# Set PyTorch CPU thread count to 1 for optimal single-core performance
 torch.set_num_threads(1)
 
 def set_seed(seed=42):
@@ -80,163 +77,58 @@ def set_seed(seed=42):
 
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Environment initialized successfully. PyTorch version: {torch.__version__}, Running on: {device}")
+print(f"Environment initialized successfully. Running on: {device}")
 """
     cells.append(nbf.v4.new_code_cell(cell1_code))
 
-    # Cell 2: Procedural Graph & DFS Dataset Generation with Candidate Selection
-    cell2_md = """### Dataset Construction: Candidate Sampling for Complex DFS Traversal Traces
-To ensure rich reasoning challenges with explicit dead-ends and multi-branch exploration:
-1. **Goal-Terminated Traversal**: The DFS traversal stops **immediately** upon discovering the goal node $g$, so $g$ appears **exactly once** at the final position of the input sequence (`trace[-1] == g`).
-2. **Synthetic Candidate Selection**: We generate $M=20,000$ candidate graph-traversal instances and select $N=4,000$ samples that strictly meet the target length bounds:
-   - DFS Trace Length $K$: $15 \\le K \\le 25$
-   - Shortest Path Length $M$: $4 \\le M \\le 10$
-3. **Randomized Token Order**: Node identifiers are randomly permuted across the vocabulary range $\\{0, 1, \\dots, 19\\}$ for every sample to enforce true algorithmic generalization.
-
-Special Vocabulary Tokens:
-- Tokens `0` - `19`: Graph Node Identifiers ($V=20$)
-- Token `20`: `<PAD>` (Padding token)
-- Token `21`: `<STOP>` (End-of-path token)
+    # Cell 2: Import Dataset
+    cell2_md = """### Dataset Loading & Preprocessing
+We load the pre-generated dataset containing $30 \\le K \\le 50$ DFS traversal traces and $10 \\le M \\le 20$ target shortest paths.
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Procedural Dataset Generation with Candidate Selection & Randomized Token Order
+    cell2_code = """# Cell 2: Load Pre-generated Complex Dataset
 
-VOCAB_SIZE = 22
-PAD_TOKEN = 20
-STOP_TOKEN = 21
-MAX_SRC_LEN = 25
-MAX_TGT_LEN = 10
+if not os.path.exists(LOCAL_DATA_PATH):
+    raise FileNotFoundError(f"Dataset file not found at '{LOCAL_DATA_PATH}'. Please run Notebook 0 first.")
 
-def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_trace_len=15, min_sp_len=4, max_sp_len=10):
-    for attempt in range(500):
-        n = random.randint(min_nodes, max_nodes)
-        G = nx.Graph()
-        G.add_nodes_from(range(n))
+dataset_payload = torch.load(LOCAL_DATA_PATH, weights_only=False)
+train_raw = dataset_payload['train']
+val_raw = dataset_payload['val']
+test_raw = dataset_payload['test']
 
-        # Build a graph with branches and dead-ends (average degree 2.0-2.5)
-        num_edges = random.randint(n, int(n * 1.4))
-        while G.number_of_edges() < num_edges:
-            u, v = random.sample(range(n), 2)
-            if u != v:
-                G.add_edge(u, v)
+VOCAB_SIZE = dataset_payload.get('vocab_size', 42)
+PAD_TOKEN = dataset_payload.get('pad_token', 40)
+STOP_TOKEN = dataset_payload.get('stop_token', 41)
+MAX_SRC_LEN = dataset_payload.get('max_src_len', 50)
+MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 21)
 
-        if not nx.is_connected(G):
-            continue
-
-        start = random.choice(range(n))
-        goal = random.choice([v for v in range(n) if v != start])
-
-        # Run DFS from start that STOPS IMMEDIATELY upon reaching goal
-        trace = []
-        visited = set()
-        goal_reached = False
-
-        def dfs(u, parent=None):
-            nonlocal goal_reached
-            if goal_reached:
-                return
-            trace.append(u)
-            visited.add(u)
-
-            if u == goal:
-                goal_reached = True
-                return
-
-            neighbors = list(G.neighbors(u))
-            random.shuffle(neighbors)
-            for v in neighbors:
-                if goal_reached:
-                    return
-                if v not in visited:
-                    dfs(v, u)
-                    if not goal_reached:
-                        # Return/backtrack step from dead-end or branch
-                        trace.append(u)
-
-        dfs(start)
-
-        if not goal_reached:
-            continue
-
-        # Verify strict termination condition: goal appears ONLY ONCE at the end
-        if trace[-1] != goal or trace.count(goal) != 1:
-            continue
-
-        if not (min_trace_len <= len(trace) <= max_trace_len):
-            continue
-
-        # Build graph constructed from trace edges
-        G_trace = nx.Graph()
-        for i in range(len(trace) - 1):
-            G_trace.add_edge(trace[i], trace[i+1])
-
-        if not nx.has_path(G_trace, start, goal):
-            continue
-
-        sp = nx.shortest_path(G_trace, source=start, target=goal)
-
-        if min_sp_len <= len(sp) <= max_sp_len:
-            # Token permutation over vocabulary of 20 tokens
-            vocab = list(range(20))
-            perm = random.sample(vocab, n)
-            mapping = {i: perm[i] for i in range(n)}
-
-            perm_trace = [mapping[x] for x in trace]
-            perm_sp = [mapping[x] for x in sp]
-            G_perm = nx.relabel_nodes(G_trace, mapping)
-            return perm_trace, perm_sp, G_perm, mapping
-
-    return None
-
-def generate_filtered_dataset(target_samples=4000):
-    dataset = []
-    attempts = 0
-    max_attempts = target_samples * 20
-    while len(dataset) < target_samples and attempts < max_attempts:
-        sample = generate_single_candidate()
-        attempts += 1
-        if sample is not None:
-            dataset.append(sample)
-    return dataset
-
-print("Generating 4,000 candidate-filtered graph DFS samples...")
-start_time = time.time()
-raw_data = generate_filtered_dataset(4000)
-print(f"Generated {len(raw_data)} samples in {time.time() - start_time:.2f} seconds.")
-
-# Split into Train (3000), Val (500), Test (500)
-train_raw = raw_data[:3000]
-val_raw = raw_data[3000:3500]
-test_raw = raw_data[3500:4000]
-
-sample_trace, sample_sp, sample_G, sample_map = train_raw[0]
-print("\\n--- Sample Graph DFS Traversal Instance ---")
-print(f"Input DFS Trace (len {len(sample_trace)}): {sample_trace}")
-print(f"Goal Node: {sample_trace[-1]} (Count in Trace: {sample_trace.count(sample_trace[-1])})")
-print(f"Target Shortest Path (len {len(sample_sp)}): {sample_sp}")
+print(f"Loaded dataset: Train={len(train_raw)}, Val={len(val_raw)}, Test={len(test_raw)}")
+print(f"Params: VOCAB_SIZE={VOCAB_SIZE}, MAX_SRC_LEN={MAX_SRC_LEN}, MAX_TGT_LEN={MAX_TGT_LEN}")
 """
     cells.append(nbf.v4.new_code_cell(cell2_code))
 
-    # Cell 3: PyTorch Dataset & DataLoader
-    cell3_md = """### PyTorch Dataset and DataLoader Wrappers
-We convert raw sequences into padded PyTorch Tensors.
-- Input sequence (`src`) is right-padded with `PAD_TOKEN=20` up to length `25`.
-- Target sequence (`tgt`) includes the shortest path nodes followed by `STOP_TOKEN=21` and right-padded with `PAD_TOKEN=20` up to length `10`.
+    # Cell 3: PyTorch Dataset Class
+    cell3_md = """### PyTorch Dataset & DataLoader
+Pads input DFS sequences up to `MAX_SRC_LEN=50` and target shortest paths up to `MAX_TGT_LEN=21`.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
-    cell3_code = """# Cell 3: Dataset and DataLoader Definition
+    cell3_code = """# Cell 3: Dataset Class Definition
 
 class GraphDFSDataset(Dataset):
     def __init__(self, raw_data, max_src_len=MAX_SRC_LEN, max_tgt_len=MAX_TGT_LEN):
         self.samples = []
-        for trace, sp, G, mapping in raw_data:
+        for item in raw_data:
+            trace, sp, G, mapping = item[0], item[1], item[2], item[3]
+            backtracks = item[4] if len(item) > 4 else 0
+            node_backtraces = item[5] if len(item) > 5 else {}
+
             # Pad SRC
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
-            src_mask = [0 if t != PAD_TOKEN else 1 for t in src] # 1 for padding
+            src_mask = [0 if t != PAD_TOKEN else 1 for t in src]
 
-            # Pad TGT (Append STOP token, then PAD)
+            # Pad TGT
             tgt = list(sp) + [STOP_TOKEN]
             tgt = tgt + [PAD_TOKEN] * (max_tgt_len - len(tgt))
 
@@ -244,8 +136,11 @@ class GraphDFSDataset(Dataset):
                 torch.tensor(src[:max_src_len], dtype=torch.long),
                 torch.tensor(src_mask[:max_src_len], dtype=torch.bool),
                 torch.tensor(tgt[:max_tgt_len], dtype=torch.long),
-                len(trace),
-                len(sp)
+                trace,
+                sp,
+                G,
+                backtracks,
+                node_backtraces
             ))
 
     def __len__(self):
@@ -254,32 +149,39 @@ class GraphDFSDataset(Dataset):
     def __getitem__(self, idx):
         return self.samples[idx]
 
+def graph_oneshot_collate_fn(batch):
+    src = torch.stack([item[0] for item in batch])
+    src_mask = torch.stack([item[1] for item in batch])
+    tgt = torch.stack([item[2] for item in batch])
+    traces = [item[3] for item in batch]
+    sps = [item[4] for item in batch]
+    graphs = [item[5] for item in batch]
+    backtracks = [item[6] for item in batch]
+    node_backtraces = [item[7] for item in batch]
+    return src, src_mask, tgt, traces, sps, graphs, backtracks, node_backtraces
+
 train_dataset = GraphDFSDataset(train_raw)
 val_dataset = GraphDFSDataset(val_raw)
 test_dataset = GraphDFSDataset(test_raw)
 
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=graph_oneshot_collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=graph_oneshot_collate_fn)
+test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=graph_oneshot_collate_fn)
 
-print(f"Datasets created: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"DataLoaders prepared. Batch size: 64")
 """
     cells.append(nbf.v4.new_code_cell(cell3_code))
 
-    # Cell 4: Model Architecture
+    # Cell 4: Model Definition
     cell4_md = """### One-Shot Graph Transformer Architecture
-The `OneShotGraphTransformer` uses:
-1. **Source Encoder**: Standard Multi-Head Self-Attention layers over the padded DFS input trace.
-2. **Parallel Target Query Embeddings**: $M_{max}=10$ learnable spatial query vectors $Q_{target} \\in \\mathbb{R}^{10 \\times d_{model}}$.
-3. **Cross-Attention Decoding**: Target queries attend to the encoded source memory representations in a single parallel step $\\mathcal{O}(1)$.
-4. **Output Linear Projection**: Projects $d_{model}$ representations to vocabulary logits $\\in \\mathbb{R}^{22}$.
+The `OneShotGraphTransformer` uses $M_{max}=21$ learnable target query embeddings to extract target shortest paths in parallel.
 """
     cells.append(nbf.v4.new_markdown_cell(cell4_md))
 
-    cell4_code = """# Cell 4: One-Shot Transformer Model Definition
+    cell4_code = """# Cell 4: Model Definition
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=50):
+    def __init__(self, d_model, max_len=100):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -298,9 +200,8 @@ class OneShotGraphTransformer(nn.Module):
         self.max_tgt_len = max_tgt_len
 
         self.token_embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_TOKEN)
-        self.pos_encoder = PositionalEncoding(embed_dim, max_len=50)
+        self.pos_encoder = PositionalEncoding(embed_dim, max_len=100)
 
-        # Encoder Layers
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
             nhead=num_heads,
@@ -311,10 +212,8 @@ class OneShotGraphTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # Target Query Embeddings (1, MAX_TGT_LEN, embed_dim)
         self.query_embeddings = nn.Parameter(torch.randn(1, max_tgt_len, embed_dim) * 0.02)
 
-        # Cross-Attention Layer
         self.cross_attn = nn.MultiheadAttention(embed_dim=embed_dim, num_heads=num_heads, dropout=0.1, batch_first=True)
         self.layer_norm = nn.LayerNorm(embed_dim)
         self.ffn = nn.Sequential(
@@ -323,35 +222,22 @@ class OneShotGraphTransformer(nn.Module):
             nn.Linear(hidden_dim, embed_dim)
         )
         self.layer_norm_out = nn.LayerNorm(embed_dim)
-
-        # Output Linear Projection
         self.fc_out = nn.Linear(embed_dim, vocab_size)
 
     def forward(self, src, src_key_padding_mask=None):
         batch_size = src.size(0)
 
-        # 1. Embed and encode source DFS trace
-        src_emb = self.token_embedding(src)
-        src_emb = self.pos_encoder(src_emb)
+        src_emb = self.pos_encoder(self.token_embedding(src))
         memory = self.encoder(src_emb, src_key_padding_mask=src_key_padding_mask)
 
-        # 2. Prepare target queries
         queries = self.query_embeddings.repeat(batch_size, 1, 1)
-
-        # 3. Cross-attention: Queries attend to source memory
         attn_out, attn_weights = self.cross_attn(
-            query=queries,
-            key=memory,
-            value=memory,
-            key_padding_mask=src_key_padding_mask
+            query=queries, key=memory, value=memory, key_padding_mask=src_key_padding_mask
         )
         x = self.layer_norm(queries + attn_out)
-
-        # 4. FFN
         ffn_out = self.ffn(x)
         x = self.layer_norm_out(x + ffn_out)
 
-        # 5. Output Logits
         logits = self.fc_out(x)
         return logits, attn_weights
 
@@ -361,20 +247,15 @@ print(f"OneShotGraphTransformer initialized. Total Trainable Parameters: {total_
 """
     cells.append(nbf.v4.new_code_cell(cell4_code))
 
-    # Cell 5: Training & Evaluation Functions
-    cell5_md = """### Training Loop and Validation Metrics
-We define rigorous evaluation metrics:
-1. **Per-Token Accuracy**: Proportion of predicted tokens matching target up to STOP_TOKEN.
-2. **Exact Path Match (Sequence Accuracy)**: Percentage of predictions where all non-padded tokens exactly match the target shortest path.
-3. **Valid Path Connectivity (%)**: Percentage of predicted paths that form a contiguous, non-self-intersecting valid path in the reconstructed graph connecting $s$ to $g$.
+    # Cell 5: Evaluation Helper Functions
+    cell5_md = """### Evaluation Helper Functions
+Evaluates loss, per-token accuracy, exact match, and graph path connectivity validity.
 """
     cells.append(nbf.v4.new_markdown_cell(cell5_md))
 
-    cell5_code = """# Cell 5: Training and Evaluation Helper Functions
+    cell5_code = """# Cell 5: Evaluation Functions
 
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN)
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
 def evaluate(model, dataloader, device):
     model.eval()
@@ -386,23 +267,19 @@ def evaluate(model, dataloader, device):
     valid_paths = 0
 
     with torch.no_grad():
-        for src, src_mask, tgt, src_lens, tgt_lens in dataloader:
+        for src, src_mask, tgt, traces, sps, graphs, backtracks, node_backtraces in dataloader:
             src, src_mask, tgt = src.to(device), src_mask.to(device), tgt.to(device)
             logits, _ = model(src, src_key_padding_mask=src_mask)
 
-            # Loss computation
             loss = criterion(logits.view(-1, VOCAB_SIZE), tgt.view(-1))
             total_loss += loss.item() * src.size(0)
 
-            # Metric predictions
             preds = torch.argmax(logits, dim=-1)
 
             for i in range(src.size(0)):
                 pred_seq = preds[i].cpu().tolist()
                 tgt_seq = tgt[i].cpu().tolist()
-                src_seq = src[i].cpu().tolist()
 
-                # Truncate at STOP or PAD
                 clean_tgt = []
                 for t in tgt_seq:
                     if t in (STOP_TOKEN, PAD_TOKEN):
@@ -415,37 +292,25 @@ def evaluate(model, dataloader, device):
                         break
                     clean_pred.append(p)
 
-                # Token Accuracy (for length of clean_tgt)
                 for t_idx in range(len(clean_tgt)):
                     total_tokens += 1
                     if t_idx < len(clean_pred) and clean_pred[t_idx] == clean_tgt[t_idx]:
                         correct_tokens += 1
 
-                # Exact Match
                 total_sequences += 1
                 if clean_pred == clean_tgt:
                     exact_matches += 1
 
-                # Valid Path Check on Graph constructed from SRC
-                clean_src = [s for s in src_seq if s != PAD_TOKEN]
-                if len(clean_src) > 1 and len(clean_pred) >= 2:
-                    G_eval = nx.Graph()
-                    for k in range(len(clean_src) - 1):
-                        G_eval.add_edge(clean_src[k], clean_src[k+1])
-
-                    # Check start and goal
-                    start_node = clean_src[0]
-                    goal_node = clean_src[-1]
-
-                    if clean_pred[0] == start_node and clean_pred[-1] == goal_node:
-                        is_valid = True
-                        for k in range(len(clean_pred) - 1):
-                            u, v = clean_pred[k], clean_pred[k+1]
-                            if not G_eval.has_edge(u, v):
-                                is_valid = False
-                                break
-                        if is_valid:
-                            valid_paths += 1
+                G_eval = graphs[i]
+                if len(clean_pred) >= 2 and clean_pred[0] == clean_tgt[0] and clean_pred[-1] == clean_tgt[-1]:
+                    is_valid = True
+                    for k in range(len(clean_pred) - 1):
+                        u, v = clean_pred[k], clean_pred[k+1]
+                        if not G_eval.has_edge(u, v):
+                            is_valid = False
+                            break
+                    if is_valid:
+                        valid_paths += 1
 
     mean_loss = total_loss / len(dataloader.dataset)
     token_acc = (correct_tokens / max(1, total_tokens)) * 100.0
@@ -454,17 +319,20 @@ def evaluate(model, dataloader, device):
 
     return mean_loss, token_acc, exact_match_acc, path_validity_acc
 
-print("Evaluation helper functions loaded successfully.")
+print("Evaluation functions loaded.")
 """
     cells.append(nbf.v4.new_code_cell(cell5_code))
 
-    # Cell 6: Interactive Training Loop
-    cell6_md = """### Interactive Model Training
-We train `OneShotGraphTransformer` over 20 epochs, tracking loss, token accuracy, exact match accuracy, and path connectivity validity.
+    # Cell 6: Training Loop
+    cell6_md = """### Interactive Model Training Loop
+We train `OneShotGraphTransformer` for 20 epochs on the complex dataset.
 """
     cells.append(nbf.v4.new_markdown_cell(cell6_md))
 
-    cell6_code = """# Cell 6: Model Training Loop
+    cell6_code = """# Cell 6: Model Training
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=20)
 
 num_epochs = 20
 history = {
@@ -482,7 +350,7 @@ for epoch in range(1, num_epochs + 1):
     model.train()
     running_loss = 0.0
 
-    for src, src_mask, tgt, _, _ in train_loader:
+    for src, src_mask, tgt, _, _, _, _, _ in train_loader:
         src, src_mask, tgt = src.to(device), src_mask.to(device), tgt.to(device)
         optimizer.zero_grad()
 
@@ -511,68 +379,40 @@ for epoch in range(1, num_epochs + 1):
           f"Val Path Validity: {val_path_validity:.2f}%")
 
 total_train_time = time.time() - start_train_time
-print(f"\\nTraining complete in {total_train_time:.2f} seconds ({total_train_time/num_epochs:.2f}s/epoch).")
+print(f"\\nTraining complete in {total_train_time:.2f} seconds.")
 """
     cells.append(nbf.v4.new_code_cell(cell6_code))
 
-    # Cell 7: Test Set Benchmark & Random Baseline
-    cell7_md = """### Test Evaluation and Random Heuristic Baseline Comparison
-To evaluate the true generalizability of the trained One-Shot Transformer, we benchmark its performance on the unseen test dataset against a **Random Walk Baseline** (choosing valid random neighboring steps from start to target).
+    # Cell 7: Test Benchmark
+    cell7_md = """### Test Dataset Benchmark Summary
+Benchmark evaluation on unseen test traces ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
 """
     cells.append(nbf.v4.new_markdown_cell(cell7_md))
 
-    cell7_code = """# Cell 7: Test Benchmark and Baseline Evaluation
+    cell7_code = """# Cell 7: Test Benchmark Evaluation
 
 test_loss, test_token_acc, test_exact_match, test_path_validity = evaluate(model, test_loader, device)
 
-# Compute Random Baseline Performance
-def random_baseline_evaluate(test_raw):
-    correct_tokens = 0
-    total_tokens = 0
-    exact_matches = 0
-
-    for trace, sp, G, mapping in test_raw:
-        start_node = trace[0]
-
-        # Simple random choices
-        total_tokens += len(sp)
-        random_pred = [start_node] + random.sample(list(range(20)), min(len(sp)-1, 19))
-
-        if random_pred == sp:
-            exact_matches += 1
-        for p_idx in range(len(sp)):
-            if p_idx < len(random_pred) and random_pred[p_idx] == sp[p_idx]:
-                correct_tokens += 1
-
-    total = len(test_raw)
-    return (correct_tokens / total_tokens) * 100.0, (exact_matches / total) * 100.0, 0.0
-
-base_token_acc, base_exact_match, base_path_validity = random_baseline_evaluate(test_raw)
-
-print("=" * 70)
-print("             TEST SET EVALUATION & BENCHMARK SUMMARY")
-print("=" * 70)
-print(f"{'Evaluation Metric':<32} | {'One-Shot Transformer':<20} | {'Random Baseline':<15}")
-print("-" * 70)
-print(f"{'Token Accuracy (%)':<32} | {test_token_acc:<20.2f} | {base_token_acc:<15.2f}")
-print(f"{'Exact Path Match (%)':<32} | {test_exact_match:<20.2f} | {base_exact_match:<15.2f}")
-print(f"{'Path Connectivity Validity (%)':<32} | {test_path_validity:<20.2f} | {base_path_validity:<15.2f}")
-print(f"{'Test Cross-Entropy Loss':<32} | {test_loss:<20.4f} | {'N/A':<15}")
-print("=" * 70)
+print("=" * 65)
+print("             ONE-SHOT TRANSFORMER TEST BENCHMARK")
+print("=" * 65)
+print(f"{'Evaluation Metric':<35} | {'Model Score':<15}")
+print("-" * 65)
+print(f"{'Test Cross-Entropy Loss':<35} | {test_loss:<15.4f}")
+print(f"{'Token Accuracy (%)':<35} | {test_token_acc:<15.2f}%")
+print(f"{'Exact Path Match (%)':<35} | {test_exact_match:<15.2f}%")
+print(f"{'Path Connectivity Validity (%)':<35} | {test_path_validity:<15.2f}%")
+print("=" * 65)
 """
     cells.append(nbf.v4.new_code_cell(cell7_code))
 
-    # Cell 8: Visualization & Plotting
-    cell8_md = """### Visualization and Publication-Quality Plotting
-We generate publication-ready analytical figures illustrating:
-1. Training and Validation Loss & Accuracy Trajectories (`charts/graph_dfs_training_curves.png`)
-2. Performance Benchmark Summary Bar Chart (`charts/graph_dfs_metrics_summary.png`)
-3. Target Query Cross-Attention Weight Heatmap (`charts/graph_dfs_attention_routing.png`)
-4. Sample Visual Graph Layout with Predicted vs. True Shortest Path (`charts/graph_dfs_sample_visualization.png`)
+    # Cell 8: Visualization
+    cell8_md = """### Visualizations with Original Input Sequence Text & Chart
+Generates analytical figures including original input trace sequences formatted in text and plotted on NetworkX graph layouts.
 """
     cells.append(nbf.v4.new_markdown_cell(cell8_md))
 
-    cell8_code = """# Cell 8: Comprehensive Analytical Visualizations
+    cell8_code = """# Cell 8: Analytical Figures and Sample Visualizations
 
 sns.set_theme(style="whitegrid", palette="mako")
 
@@ -597,130 +437,88 @@ lines = l1 + l2 + l3 + l4
 labels = [l.get_label() for l in lines]
 ax1.legend(lines, labels, loc='center right', frameon=True, facecolor='white', framealpha=0.9)
 
-plt.title('One-Shot Graph Transformer: Training & Validation Progress', fontsize=14, fontweight='bold', pad=15)
+plt.title('One-Shot Graph Transformer: Training Trajectories', fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_training_curves.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_training_curves.png', dpi=300, bbox_inches='tight')
+if os.path.basename(os.getcwd()) == "graphs":
+    plt.savefig("../charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+else:
+    plt.savefig("charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("graphs/charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-# Chart 2: Test Metrics Comparison Bar Chart
-fig, ax = plt.subplots(figsize=(8, 5))
-metrics = ['Token Acc (%)', 'Exact Match (%)', 'Path Validity (%)']
-transformer_scores = [test_token_acc, test_exact_match, test_path_validity]
-baseline_scores = [base_token_acc, base_exact_match, base_path_validity]
+# Chart 2: Sample Graph Shortest Path Extraction
+sample_src, sample_mask, sample_tgt, sample_trace, sample_sp, G_sample, backtracks_sample, node_backtraces_sample = test_dataset[0]
 
-x = np.arange(len(metrics))
-width = 0.35
-
-rects1 = ax.bar(x - width/2, transformer_scores, width, label='One-Shot Transformer', color='#2b5c8f')
-rects2 = ax.bar(x + width/2, baseline_scores, width, label='Random Baseline', color='#d95f02')
-
-ax.set_ylabel('Accuracy (%)', fontsize=12, fontweight='bold')
-ax.set_title('Shortest Path Extraction Performance Comparison', fontsize=14, fontweight='bold', pad=15)
-ax.set_xticks(x)
-ax.set_xticklabels(metrics, fontsize=11, fontweight='bold')
-ax.legend(frameon=True, facecolor='white')
-ax.set_ylim(0, 105)
-
-for rect in rects1 + rects2:
-    height = rect.get_height()
-    ax.annotate(f'{height:.1f}%',
-                xy=(rect.get_x() + rect.get_width() / 2, height),
-                xytext=(0, 3),
-                textcoords="offset points",
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
-
-plt.tight_layout()
-plt.savefig('charts/graph_dfs_metrics_summary.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_metrics_summary.png', dpi=300, bbox_inches='tight')
-plt.show()
-
-# Chart 3: Cross-Attention Weight Routing Heatmap
 model.eval()
 with torch.no_grad():
-    sample_src, sample_mask, sample_tgt, _, _ = test_dataset[0]
     sample_src_b = sample_src.unsqueeze(0).to(device)
     sample_mask_b = sample_mask.unsqueeze(0).to(device)
-
-    _, attn_weights = model(sample_src_b, src_key_padding_mask=sample_mask_b)
-    attn_map = attn_weights[0].cpu().numpy() # (MAX_TGT_LEN, MAX_SRC_LEN)
-
-clean_src_labels = [str(x.item()) for x in sample_src if x.item() != PAD_TOKEN]
-clean_attn_map = attn_map[:, :len(clean_src_labels)]
-
-plt.figure(figsize=(10, 5))
-sns.heatmap(clean_attn_map, cmap='viridis', xticklabels=clean_src_labels, yticklabels=[f"Step {i+1}" for i in range(MAX_TGT_LEN)], cbar_kws={'label': 'Cross-Attention Weight'})
-plt.title('Target Position Query Cross-Attention Routing over Input DFS Trace', fontsize=13, fontweight='bold', pad=15)
-plt.xlabel('Input DFS Traversal Trace Tokens', fontsize=11, fontweight='bold')
-plt.ylabel('Parallel Output Query Positions', fontsize=11, fontweight='bold')
-plt.tight_layout()
-plt.savefig('charts/graph_dfs_attention_routing.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_attention_routing.png', dpi=300, bbox_inches='tight')
-plt.show()
-
-# Chart 4: NetworkX Graph Visualization with Sample Shortest Path Prediction
-sample_trace_raw, sample_sp_raw, G_sample, mapping_sample = test_raw[0]
-
-# Generate model prediction for sample 0
-with torch.no_grad():
     pred_logits, _ = model(sample_src_b, src_key_padding_mask=sample_mask_b)
-    pred_seq = torch.argmax(pred_logits[0], dim=-1).cpu().tolist()
-    pred_clean = []
-    for p in pred_seq:
+    pred_tokens = torch.argmax(pred_logits[0], dim=-1).cpu().tolist()
+    clean_pred = []
+    for p in pred_tokens:
         if p in (STOP_TOKEN, PAD_TOKEN):
             break
-        pred_clean.append(p)
+        clean_pred.append(p)
 
-plt.figure(figsize=(9, 7))
+plt.figure(figsize=(10, 7))
 pos = nx.spring_layout(G_sample, seed=42)
 
-# Draw base graph
-nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=600)
+nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=550)
 nx.draw_networkx_edges(G_sample, pos, edge_color='silver', width=1.5)
 
-# Highlight Shortest Path Edges
-sp_edges = [(sample_sp_raw[i], sample_sp_raw[i+1]) for i in range(len(sample_sp_raw)-1)]
+sp_edges = [(sample_sp[i], sample_sp[i+1]) for i in range(len(sample_sp)-1)]
 nx.draw_networkx_edges(G_sample, pos, edgelist=sp_edges, edge_color='#2b5c8f', width=3.5, label='True Shortest Path')
 
-# Highlight Start and Destination Nodes
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp_raw[0]], node_color='limegreen', node_size=800, label='Start Node')
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp_raw[-1]], node_color='crimson', node_size=800, label='Goal Node')
+nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[0]], node_color='limegreen', node_size=750, label='Start Node')
+nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[-1]], node_color='crimson', node_size=750, label='Goal Node')
 
-# Node labels
 labels = {node: str(node) for node in G_sample.nodes()}
-nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=10, font_weight='bold')
+nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='bold')
 
-plt.title(f"Sample Graph Shortest Path Extraction\\nTrue Path: {sample_sp_raw} | Predicted: {pred_clean}", fontsize=12, fontweight='bold', pad=15)
+# Text box with full original sequence
+trace_str = f"Original Input DFS Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
+sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
+pred_str = f"Model Predicted Path: {clean_pred}"
+backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtraces_sample.items())[:5])}"
+
+plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{backtrack_str}",
+               fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+plt.title("One-Shot Shortest Path Extraction Layout", fontsize=13, fontweight='bold', pad=15)
 plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
 plt.axis('off')
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_sample_visualization.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_sample_visualization.png', dpi=300, bbox_inches='tight')
+plt.subplots_adjust(bottom=0.25)
+
+if os.path.basename(os.getcwd()) == "graphs":
+    plt.savefig("../charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+else:
+    plt.savefig("charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+    plt.savefig("graphs/charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-print("All publication-quality figures successfully generated and saved to 'charts/'.")
+print("One-shot analytical figures successfully generated and saved.")
 """
     cells.append(nbf.v4.new_code_cell(cell8_code))
 
-    # Cell 9: Summary & Self-Reflection
-    cell9_md = """### Self-Reflection & Summary of Empirical Results
-
-1. **Successful Goal-Terminated DFS Extraction**:
-   The One-Shot Graph Transformer achieves near-perfect token accuracy and exact shortest path match on goal-terminated graph DFS traversal traces containing complex multi-branch exploration and dead-ends.
-2. **Permutation Invariance & Randomization**:
-   By randomizing token order across vocabulary $[0, 19]$ per sample, we eliminated memorization shortcuts, proving that the model learns the underlying **graph connectivity and shortest-path extraction algorithm**.
-3. **Computational Efficiency Advantage**:
-   Parallel one-shot prediction executes in exactly **1 forward pass** $\\mathcal{O}(1)$, providing massive inference speedups compared to traditional multi-step autoregressive generation.
+    # Cell 9: Summary
+    cell9_md = """### Self-Reflection & Summary
+1. **Hardened Traversal Parallel Extraction**:
+   Evaluated One-Shot extraction on input sequence traces of length $30 \\le K \\le 50$ with shortest paths of length $10 \\le M \\le 20$.
+2. **Backtrace Sensitivity**:
+   Parallel query cross-attention routes over input DFS traces to extract spatial shortest paths amidst node backtraces and dead-ends.
 """
     cells.append(nbf.v4.new_markdown_cell(cell9_md))
 
     nb.cells = cells
 
-    os.makedirs("graphs", exist_ok=True)
     nb_path = "graphs/0.one_shot_graph_shortest_path_tutorial.ipynb"
     with open(nb_path, "w", encoding="utf-8") as f:
         nbf.write(nb, f)
-    print(f"Notebook successfully written to {nb_path}")
+    print(f"Notebook written to {nb_path}")
 
 if __name__ == "__main__":
     build_notebook()

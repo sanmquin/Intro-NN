@@ -7,33 +7,34 @@ def build_ar_notebook():
 
     # Title & Introduction
     title_md = """# 1. Step-by-Step Autoregressive Graph Shortest Path Transformer
-## Sequential Causal Sequence-to-Sequence Modeling for Algorithmic Traversal Trace Extraction
+## Sequential Causal Sequence-to-Sequence Modeling for Hardened Algorithmic Traversal Traces
 
 ### Executive Summary & Educational Motivation
-Extracting structural path information from raw algorithmic execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
+Extracting structural path information from complex, noisy algorithmic execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
 
-In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on candidate-filtered goal-terminated Depth-First Search (DFS) traces. The model learns to parse forward exploration and backtracking steps in 1D traces to extract the direct shortest path sequentially.
+In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated Depth-First Search (DFS) traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The model learns to parse forward exploration and backtracking steps in 1D traces to extract the direct shortest path sequentially.
 
 ---
 
 ### Mathematical Problem Formulation
 
 #### 1. Input DFS Trace Encoding
-Given an input DFS traversal trace $T = [t_1, t_2, \\dots, t_K]$ ($15 \\le K \\le 25$) where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
+Given an input DFS traversal trace $T = [t_1, t_2, \\dots, t_K]$ ($30 \\le K \\le 50$) where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
 $$H_{src} = \\text{Encoder}\\Big(E(T) + P(T)\\Big) \\in \\mathbb{R}^{K \\times d_{model}}$$
 
-#### 2. Causal Autoregressive Decoding
-The target shortest path $P^* = [p_1^*, p_2^*, \\dots, p_M^*]$ is predicted sequentially. At step $m$, given previous tokens $p_{<m}^* = [p_1^*, \\dots, p_{m-1}^*]$, the Decoder predicts the conditional probability distribution:
+#### 2. Causal Autoregressive Decoding & Plan Mechanics
+The target shortest path $P^* = [p_1^*, p_2^*, \\dots, p_M^*]$ ($10 \\le M \\le 20$) is predicted sequentially. At step $m$, given previous tokens $p_{<m}^* = [p_1^*, \\dots, p_{m-1}^*]$, the Decoder predicts:
 $$P(p_m^* \\mid p_{<m}^*, T) = \\text{Softmax}\\Bigg(\\text{FC}\\bigg(\\text{Decoder}\\Big(E(p_{<m}^*) + P(p_{<m}^*), H_{src}, M_{causal}\\Big)\\bigg)\\Bigg)$$
 where $M_{causal}$ is a causal triangular mask preventing lookahead to future target positions ($m' \\ge m$).
 
-#### 3. Teacher-Forcing Training Loss
-During training, we minimize the Cross-Entropy loss over all target tokens:
-$$\\mathcal{L}_{CE}(\\theta) = -\\frac{1}{M} \\sum_{m=1}^M \\log P_\\theta(p_m^* \\mid p_{<m}^*, T)$$
+#### 3. Good Plan vs. Bad Plan Mechanics & Compounding Errors
+In long-horizon sequential rollout ($M \\in [10, 20]$):
+- **Good Plan**: Every predicted token $p_m$ is an adjacent valid node on $G$, maintaining valid path connectivity toward goal $g$.
+- **Bad Plan & Regressions**: A single incorrect token $p_m$ shifts autoregressive context into out-of-distribution space, causing **compounding errors** where subsequent step predictions fail or hallucinate non-existent edges. The probability of sequence failure scales as $1 - (1 - \\epsilon)^M$.
 """
     cells.append(nbf.v4.new_markdown_cell(title_md))
 
-    # Cell 1: Environment Setup, Seeds, Drive Paths
+    # Cell 1: Environment Setup
     cell1_code = """# Cell 1: Environment Setup, Seeds, and Google Drive Configuration
 
 import os
@@ -94,15 +95,15 @@ DATASET_PATH, CKPT_DIR = setup_drive_paths()
 """
     cells.append(nbf.v4.new_code_cell(cell1_code))
 
-    # Cell 2: Dataset Loading & PyTorch Dataset Class
-    cell2_md = """### Dataset Loading & PyTorch Dataset Wrappers
-We load the pre-generated candidate-filtered dataset directly from Drive.
-- `src`: Input DFS trace right-padded to length 25 with `PAD_TOKEN=20`.
-- `tgt`: Shortest path sequence with `STOP_TOKEN=21` and right-padded to length 10 with `PAD_TOKEN=20`.
+    # Cell 2: Dataset Loading
+    cell2_md = """### Dataset Loading & PyTorch Dataset Class
+Loads the pre-generated complex dataset ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
+- `src`: Input DFS trace padded to `MAX_SRC_LEN=50` with `PAD_TOKEN=40`.
+- `tgt`: Shortest path with `STOP_TOKEN=41` padded to `MAX_TGT_LEN=21` with `PAD_TOKEN=40`.
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Import Dataset from Drive & Define PyTorch Dataset
+    cell2_code = """# Cell 2: Import Hardened Dataset & Define PyTorch Dataset
 
 if not os.path.exists(DATASET_PATH):
     raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run Notebook 0 to generate the dataset.")
@@ -112,17 +113,21 @@ train_raw = dataset_payload['train']
 val_raw = dataset_payload['val']
 test_raw = dataset_payload['test']
 
-VOCAB_SIZE = dataset_payload.get('vocab_size', 22)
-PAD_TOKEN = dataset_payload.get('pad_token', 20)
-STOP_TOKEN = dataset_payload.get('stop_token', 21)
-MAX_SRC_LEN = dataset_payload.get('max_src_len', 25)
-MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 10)
+VOCAB_SIZE = dataset_payload.get('vocab_size', 42)
+PAD_TOKEN = dataset_payload.get('pad_token', 40)
+STOP_TOKEN = dataset_payload.get('stop_token', 41)
+MAX_SRC_LEN = dataset_payload.get('max_src_len', 50)
+MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 21)
 
 class GraphDFSARDataset(Dataset):
     def __init__(self, raw_data, max_src_len=MAX_SRC_LEN, max_tgt_len=MAX_TGT_LEN):
         self.samples = []
         self.raw_data = raw_data
-        for trace, sp, G, mapping in raw_data:
+        for item in raw_data:
+            trace, sp, G, mapping = item[0], item[1], item[2], item[3]
+            backtracks = item[4] if len(item) > 4 else 0
+            node_backtraces = item[5] if len(item) > 5 else {}
+
             # Pad SRC
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
             src_mask = [False if t != PAD_TOKEN else True for t in src]
@@ -139,7 +144,9 @@ class GraphDFSARDataset(Dataset):
                 torch.tensor(tgt_mask[:max_tgt_len], dtype=torch.bool),
                 trace,
                 sp,
-                G
+                G,
+                backtracks,
+                node_backtraces
             ))
 
     def __len__(self):
@@ -156,7 +163,9 @@ def graph_ar_collate_fn(batch):
     traces = [item[4] for item in batch]
     sps = [item[5] for item in batch]
     graphs = [item[6] for item in batch]
-    return src, src_mask, tgt, tgt_mask, traces, sps, graphs
+    backtracks = [item[7] for item in batch]
+    node_backtraces = [item[8] for item in batch]
+    return src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces
 
 train_dataset = GraphDFSARDataset(train_raw)
 val_dataset = GraphDFSARDataset(val_raw)
@@ -166,25 +175,24 @@ train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn
 val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=graph_ar_collate_fn)
 test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=graph_ar_collate_fn)
 
-print(f"Datasets loaded successfully from Drive: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"Datasets loaded successfully: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
 """
     cells.append(nbf.v4.new_code_cell(cell2_code))
 
-    # Cell 3: Autoregressive Model Architecture
+    # Cell 3: Model Architecture
     cell3_md = """### Step-by-Step Autoregressive Graph Transformer Architecture
-The `AutoregressiveGraphTransformer` consists of:
-1. **Positional Encoding Layer**: Adds sinusoidal positional signals to token embeddings.
-2. **Encoder**: 2-layer Multi-Head Self-Attention processing the padded input DFS trace.
-3. **Causal Decoder**: 2-layer Multi-Head Decoder with a square subsequent mask (`tgt_mask`) and cross-attention over encoded DFS trace memory.
-4. **Output Head**: Linear projection layer mapping decoder representations to vocabulary logits $\\in \\mathbb{R}^{22}$.
-5. **Autoregressive Rollout Inference**: Step-by-step greedy sequence generation during evaluation.
+The `AutoregressiveGraphTransformer` architecture is kept **strictly unchanged**:
+1. **Positional Encoding Layer**: Sinusoidal positional embeddings.
+2. **Encoder**: 2-layer Multi-Head Self-Attention over padded input trace ($K \\le 50$).
+3. **Causal Decoder**: 2-layer Multi-Head Decoder with cross-attention and triangular causal mask.
+4. **Output Head**: Linear projection to vocabulary logits $\\in \\mathbb{R}^{42}$.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
-    cell3_code = """# Cell 3: Model Architecture Definition
+    cell3_code = """# Cell 3: Model Architecture Definition (Strictly Unchanged)
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=50):
+    def __init__(self, d_model, max_len=100):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -201,7 +209,7 @@ class AutoregressiveGraphTransformer(nn.Module):
         super(AutoregressiveGraphTransformer, self).__init__()
         self.embed_dim = embed_dim
         self.token_embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_TOKEN)
-        self.pos_encoder = PositionalEncoding(embed_dim)
+        self.pos_encoder = PositionalEncoding(embed_dim, max_len=100)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
@@ -261,7 +269,6 @@ class AutoregressiveGraphTransformer(nn.Module):
             if all(finished):
                 break
 
-            # Construct tgt_in tensor
             curr_max_len = max(len(s) for s in curr_seqs)
             tgt_in = torch.full((batch_size, curr_max_len), PAD_TOKEN, dtype=torch.long, device=device)
             for b in range(batch_size):
@@ -276,7 +283,7 @@ class AutoregressiveGraphTransformer(nn.Module):
                 tgt_mask=tgt_mask,
                 memory_key_padding_mask=src_key_padding_mask
             )
-            logits = self.fc_out(out) # (batch_size, curr_max_len, vocab_size)
+            logits = self.fc_out(out)
 
             for b in range(batch_size):
                 if finished[b]:
@@ -292,21 +299,20 @@ class AutoregressiveGraphTransformer(nn.Module):
 
 model = AutoregressiveGraphTransformer().to(device)
 total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"AutoregressiveGraphTransformer initialized. Total Trainable Parameters: {total_params:,}")
+print(f"AutoregressiveGraphTransformer initialized. Total Parameters: {total_params:,}")
 """
     cells.append(nbf.v4.new_code_cell(cell3_code))
 
     # Cell 4: Evaluation Functions
-    cell4_md = """### Validation & Evaluation Helper Functions
-We define rigorous evaluation metrics:
-1. **Teacher-Forcing Validation Loss**: Cross-entropy loss computed over shifted target sequences.
-2. **Teacher-Forcing Token Accuracy**: Percentage of correct next-token predictions under teacher forcing.
-3. **Autoregressive Rollout Exact Path Match (%)**: Percentage of predicted paths matching the exact target shortest path.
-4. **Valid Path Connectivity (%)**: Percentage of predicted paths forming a continuous, valid path on the graph connecting $s$ to $g$.
+    cell4_md = """### Evaluation Helper Functions
+Calculates:
+1. Teacher-Forcing Cross-Entropy Loss & Token Accuracy.
+2. Step-by-Step Rollout Exact Path Match (%).
+3. Valid Graph Connectivity (%).
 """
     cells.append(nbf.v4.new_markdown_cell(cell4_md))
 
-    cell4_code = """# Cell 4: Evaluation Metrics Computation Helper Functions
+    cell4_code = """# Cell 4: Evaluation Helper Functions
 
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN)
 
@@ -321,7 +327,7 @@ def evaluate_model(model, dataloader, device, run_rollout=True):
     valid_paths = 0
 
     with torch.no_grad():
-        for src, src_mask, tgt, tgt_mask, traces, sps, graphs in dataloader:
+        for src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces in dataloader:
             src, src_mask = src.to(device), src_mask.to(device)
             tgt, tgt_mask = tgt.to(device), tgt_mask.to(device)
 
@@ -343,14 +349,12 @@ def evaluate_model(model, dataloader, device, run_rollout=True):
             loss = criterion(logits.reshape(-1, VOCAB_SIZE), tgt_label.reshape(-1))
             total_loss += loss.item() * src.size(0)
 
-            # Teacher forcing token accuracy
             preds_tf = torch.argmax(logits, dim=-1)
             valid_tokens = (tgt_label != PAD_TOKEN)
             correct_tf_tokens += ((preds_tf == tgt_label) & valid_tokens).sum().item()
             total_tf_tokens += valid_tokens.sum().item()
 
             if run_rollout:
-                # Perform step-by-step autoregressive rollout
                 pred_seqs = model.solve_graph_autoregressive(src, src_key_padding_mask=src_mask)
 
                 for i in range(src.size(0)):
@@ -361,7 +365,6 @@ def evaluate_model(model, dataloader, device, run_rollout=True):
                     if clean_pred == clean_tgt:
                         exact_matches += 1
 
-                    # Check path validity on NetworkX graph
                     G_eval = graphs[i]
                     if len(clean_pred) >= 2 and clean_pred[0] == clean_tgt[0] and clean_pred[-1] == clean_tgt[-1]:
                         is_valid = True
@@ -380,28 +383,30 @@ def evaluate_model(model, dataloader, device, run_rollout=True):
 
     return mean_loss, tf_acc, exact_match_acc, path_validity_acc
 
-print("Evaluation helper functions loaded successfully.")
+print("Evaluation functions loaded.")
 """
     cells.append(nbf.v4.new_code_cell(cell4_code))
 
-    # Cell 5: Resumable Drive Checkpointing Training Loop
-    cell5_md = """### Training Loop with Google Drive Resumable Checkpointing
-The training configuration enables:
-1. **Checkpoints Stored Every 1,000 Epochs**: Versioned checkpoints (`ar_graph_transformer_epoch_{epoch}.pt`) saved to Google Drive.
-2. **Latest Checkpoint Duplication**: `ar_graph_transformer_latest.pt` updated continuously.
-3. **Resumable Training**: Scans Drive/local path and resumes training up to 10,000 epochs.
-4. **Periodic Validation**: Validation is executed **strictly every 50 epochs** (`validate_every=50`) to minimize evaluation overhead.
+    # Cell 5: Training Loop with Config Controls
+    cell5_md = """### Configurable Training Loop with Restart & Full-Training Support
+The `config` dictionary includes explicit controls:
+- `"restart_training"`: When `True`, skips loading previous checkpoints and starts fresh from epoch 1.
+- `"run_full_training"`: When `True`, skips the `epochs_to_train` constraint and trains for the full `total_epochs`.
+- `"resume_training"`: When `True` (and `restart_training` is `False`), automatically resumes from the latest checkpoint.
+- `"validate_every"`: Validation runs **strictly every 50 epochs**.
 """
     cells.append(nbf.v4.new_markdown_cell(cell5_md))
 
-    cell5_code = """# Cell 5: Training Loop with Drive Checkpointing & Periodic Validation
+    cell5_code = """# Cell 5: Training Loop with Config Controls (restart_training & run_full_training)
 
 config = {
-    "resume_training": True,
+    "restart_training": False,   # Set to True to skip existing checkpoints and start fresh
+    "run_full_training": False,  # Set to True to train for total_epochs ignoring epochs_to_train
+    "resume_training": True,     # Resumes from latest checkpoint if restart_training is False
     "total_epochs": 10000,
     "save_every": 1000,
     "validate_every": 50,
-    "epochs_to_train": 20, # Interactive run length for local execution & verification
+    "epochs_to_train": 20,       # Interactive execution chunk size
     "learning_rate": 1e-3,
     "batch_size": 64
 }
@@ -419,21 +424,33 @@ history = {
     'val_path_validity': []
 }
 
-# Resume from existing checkpoint if present
-if config["resume_training"] and os.path.exists(latest_ckpt_path):
-    print(f"Loading checkpoint from '{latest_ckpt_path}'...")
-    checkpoint = torch.load(latest_ckpt_path, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    start_epoch = checkpoint['epoch'] + 1
-    if 'history' in checkpoint:
-        history = checkpoint['history']
-    print(f"Resumed training from epoch {start_epoch}.")
+# Handle restart_training and resume_training configuration
+if config.get("restart_training", False):
+    print("Config 'restart_training' is True: Fresh initialization, skipping checkpoint loading.")
+    start_epoch = 1
+elif config.get("resume_training", True) and os.path.exists(latest_ckpt_path):
+    try:
+        print(f"Loading checkpoint from '{latest_ckpt_path}'...")
+        checkpoint = torch.load(latest_ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        if 'history' in checkpoint:
+            history = checkpoint['history']
+        print(f"Resumed training from epoch {start_epoch}.")
+    except Exception as e:
+        print(f"Checkpoint incompatible ({e}). Starting fresh training from epoch 1...")
+        start_epoch = 1
 else:
     print("Starting training from scratch...")
 
-end_epoch = start_epoch + config["epochs_to_train"] - 1
-print(f"Running epochs {start_epoch} to {end_epoch} (Config Total Target: {config['total_epochs']} epochs)...")
+# Determine end epoch based on run_full_training
+if config.get("run_full_training", False):
+    end_epoch = config["total_epochs"]
+    print(f"Config 'run_full_training' is True: Running full training up to {end_epoch} epochs.")
+else:
+    end_epoch = min(start_epoch + config["epochs_to_train"] - 1, config["total_epochs"])
+    print(f"Running epochs {start_epoch} to {end_epoch} (Config Total Target: {config['total_epochs']} epochs)...")
 
 start_train_time = time.time()
 
@@ -441,7 +458,7 @@ for epoch in range(start_epoch, end_epoch + 1):
     model.train()
     running_loss = 0.0
 
-    for src, src_mask, tgt, tgt_mask, _, _, _ in train_loader:
+    for src, src_mask, tgt, tgt_mask, _, _, _, _, _ in train_loader:
         src, src_mask = src.to(device), src_mask.to(device)
         tgt, tgt_mask = tgt.to(device), tgt_mask.to(device)
 
@@ -471,7 +488,7 @@ for epoch in range(start_epoch, end_epoch + 1):
     train_loss = running_loss / len(train_loader.dataset)
     history['train_loss'].append(train_loss)
 
-    # Validation executed ONLY every 50 epochs (or on the final epoch of the run)
+    # Validation executed strictly every 50 epochs (or on final epoch of run)
     if epoch % config["validate_every"] == 0 or epoch == end_epoch:
         val_loss, val_tf_acc, val_exact_match, val_path_validity = evaluate_model(
             model, val_loader, device, run_rollout=True
@@ -489,7 +506,7 @@ for epoch in range(start_epoch, end_epoch + 1):
         if epoch % 5 == 0 or epoch == start_epoch:
             print(f"Epoch {epoch:04d}/{config['total_epochs']:04d} | Train Loss: {train_loss:.4f} | (Validation skipped for this epoch)")
 
-    # Save checkpoint every 1,000 epochs (or on the final epoch)
+    # Save checkpoint every 1,000 epochs (or on final epoch)
     if epoch % config["save_every"] == 0 or epoch == end_epoch:
         checkpoint_payload = {
             'epoch': epoch,
@@ -498,9 +515,7 @@ for epoch in range(start_epoch, end_epoch + 1):
             'config': config,
             'history': history
         }
-        # Latest checkpoint
         torch.save(checkpoint_payload, latest_ckpt_path)
-        # Versioned checkpoint every 1000 epochs
         if epoch % config["save_every"] == 0:
             versioned_path = os.path.join(CKPT_DIR, f"ar_graph_transformer_epoch_{epoch}.pt")
             torch.save(checkpoint_payload, versioned_path)
@@ -511,41 +526,40 @@ print(f"\\nTraining chunk complete in {total_train_time:.2f} seconds.")
 """
     cells.append(nbf.v4.new_code_cell(cell5_code))
 
-    # Cell 6: Held-Out Test Set Evaluation
-    cell6_md = """### Held-Out Test Dataset Benchmark
-We evaluate the trained `AutoregressiveGraphTransformer` on the unseen test set (`test_loader`). As required, we present the model's exact empirical metrics without naive baseline benchmarks.
+    # Cell 6: Test Benchmark
+    cell6_md = """### Held-Out Test Set Evaluation
+We evaluate the model on the unseen test dataset ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
 """
     cells.append(nbf.v4.new_markdown_cell(cell6_md))
 
-    cell6_code = """# Cell 6: Test Set Evaluation
+    cell6_code = """# Cell 6: Test Set Benchmark
 
 test_loss, test_tf_acc, test_exact_match, test_path_validity = evaluate_model(
     model, test_loader, device, run_rollout=True
 )
 
-print("=" * 60)
+print("=" * 65)
 print("       HELD-OUT TEST SET EVALUATION SUMMARY")
-print("=" * 60)
+print("=" * 65)
 print(f"{'Evaluation Metric':<35} | {'Model Score':<15}")
-print("-" * 60)
+print("-" * 65)
 print(f"{'Test Cross-Entropy Loss':<35} | {test_loss:<15.4f}")
 print(f"{'Teacher-Forcing Token Acc (%)':<35} | {test_tf_acc:<15.2f}%")
 print(f"{'Autoregressive Exact Match (%)':<35} | {test_exact_match:<15.2f}%")
 print(f"{'Path Connectivity Validity (%)':<35} | {test_path_validity:<15.2f}%")
-print("=" * 60)
+print("=" * 65)
 """
     cells.append(nbf.v4.new_code_cell(cell6_code))
 
-    # Cell 7: Publication Quality Analytical Visualizations
-    cell7_md = """### Publication-Quality Analytical Visualizations
-We generate and save publication-ready analytical figures:
-1. **Training & Validation Trajectories**: Tracking training loss and validation exact match over epochs (`charts/ar_graph_dfs_training_curves.png`).
-2. **Causal Attention Routing Heatmap**: Visualizing cross-attention and causal self-attention weights (`charts/ar_graph_dfs_attention_routing.png`).
-3. **NetworkX Path Prediction Layout**: Overlaying true vs. step-by-step predicted shortest path on a test graph layout (`charts/ar_graph_dfs_sample_visualization.png`).
+    # Cell 7: Visualizations with Original Input Sequence Text & Chart
+    cell7_md = """### Publication-Quality Visualizations & Sample Analysis
+Generates:
+1. **Training & Validation Loss Curves** (`charts/ar_graph_dfs_training_curves.png`).
+2. **Sample Graph Shortest Path Rollout**: Includes the **original input sequence both in text format and in the visual chart layout**, alongside true vs. predicted path overlays and node backtrace counts (`charts/ar_graph_dfs_sample_visualization.png`).
 """
     cells.append(nbf.v4.new_markdown_cell(cell7_md))
 
-    cell7_code = """# Cell 7: Generate Publication-Quality Analytical Plots
+    cell7_code = """# Cell 7: Generate Analytical Figures and Visual Layouts
 
 sns.set_theme(style="whitegrid", palette="mako")
 
@@ -585,8 +599,8 @@ else:
     plt.savefig("graphs/charts/ar_graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-# Chart 2: Sample Graph Shortest Path Rollout Visualization
-sample_src, sample_mask, sample_tgt, _, sample_trace, sample_sp, G_sample = test_dataset[0]
+# Chart 2: Sample Graph Shortest Path Rollout with Original Sequence Text and Visual Layout
+sample_src, sample_mask, sample_tgt, _, sample_trace, sample_sp, G_sample, backtracks_sample, node_backtraces_sample = test_dataset[0]
 
 model.eval()
 with torch.no_grad():
@@ -594,11 +608,11 @@ with torch.no_grad():
     sample_mask_b = sample_mask.unsqueeze(0).to(device)
     pred_rollout = model.solve_graph_autoregressive(sample_src_b, src_key_padding_mask=sample_mask_b)[0]
 
-plt.figure(figsize=(9, 7))
+plt.figure(figsize=(10, 7))
 pos = nx.spring_layout(G_sample, seed=42)
 
 # Draw base graph
-nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=600)
+nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=550)
 nx.draw_networkx_edges(G_sample, pos, edge_color='silver', width=1.5)
 
 # Highlight Shortest Path Edges
@@ -606,16 +620,26 @@ sp_edges = [(sample_sp[i], sample_sp[i+1]) for i in range(len(sample_sp)-1)]
 nx.draw_networkx_edges(G_sample, pos, edgelist=sp_edges, edge_color='#2b5c8f', width=3.5, label='True Shortest Path')
 
 # Highlight Start and Destination Nodes
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[0]], node_color='limegreen', node_size=800, label='Start Node')
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[-1]], node_color='crimson', node_size=800, label='Goal Node')
+nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[0]], node_color='limegreen', node_size=750, label='Start Node')
+nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[-1]], node_color='crimson', node_size=750, label='Goal Node')
 
 labels = {node: str(node) for node in G_sample.nodes()}
-nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=10, font_weight='bold')
+nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='bold')
 
-plt.title(f"Autoregressive Shortest Path Prediction\\nTrue Path: {sample_sp} | Predicted: {pred_rollout}", fontsize=12, fontweight='bold', pad=15)
+# Formatted original sequence text block
+trace_str = f"Original Input DFS Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
+sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
+pred_str = f"Autoregressive Predicted Path: {pred_rollout}"
+backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtraces_sample.items())[:5])}"
+
+plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{backtrack_str}",
+               fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+plt.title("Autoregressive Shortest Path Prediction Layout", fontsize=13, fontweight='bold', pad=15)
 plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
 plt.axis('off')
 plt.tight_layout()
+plt.subplots_adjust(bottom=0.25)
 
 if os.path.basename(os.getcwd()) == "graphs":
     plt.savefig("../charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
@@ -625,19 +649,20 @@ else:
     plt.savefig("graphs/charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-print("All publication-quality figures generated and saved.")
+print("Publication-quality figures generated and saved.")
 """
     cells.append(nbf.v4.new_code_cell(cell7_code))
 
-    # Cell 8: Summary & Reflection
-    cell8_md = """### Self-Reflection & Summary of Empirical Results
+    # Cell 8: Plan Mechanics Analysis & Summary
+    cell8_md = """### Self-Reflection & Mechanics of Good vs. Bad Plans
 
-1. **Successful Autoregressive Path Extraction**:
-   The Step-by-Step Autoregressive Graph Transformer learns to generate the exact shortest path from goal-terminated DFS traces token-by-token using causal self-attention and cross-attention over encoded trace representations.
-2. **Drive Checkpointing & Periodic Validation**:
-   Validation is executed strictly every 50 epochs (`validate_every=50`), saving model checkpoints every 1,000 epochs directly to Google Drive to enable resumable long training runs up to 10,000 epochs.
-3. **Sequential Reasoning vs. Parallel One-Shot**:
-   Unlike one-shot models that predict all path tokens in parallel, autoregressive generation conditions each step on previously predicted tokens, guaranteeing valid step transitions and continuous path connectivity.
+1. **Impact of Hardened Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$)**:
+   Increasing input DFS trace length to 30-50 tokens and shortest path target length to 10-20 steps significantly increases sequential reasoning complexity. The model must process deep search trees with multiple backtrace regressions.
+2. **Mechanics of a Good Plan vs. a Bad Plan**:
+   - **Good Plan**: The autoregressive decoder successfully attends to valid cross-attention memory transitions, predicting step $p_m$ aligned with the graph adjacency matrix $A$.
+   - **Bad Plan & Compounding Errors**: In long target sequences ($M \\in [10, 20]$), an early prediction error at step $m$ feeds an off-path token back into the causal decoder context. This causes compounding errors where the model loses spatial trajectory context and fails rollout exact match.
+3. **Restart & Full Training Controls**:
+   The notebook supports `"restart_training": True` to bypass saved checkpoints and `"run_full_training": True` to execute the full 10,000 epoch training schedule.
 """
     cells.append(nbf.v4.new_markdown_cell(cell8_md))
 

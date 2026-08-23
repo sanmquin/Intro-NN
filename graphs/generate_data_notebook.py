@@ -6,7 +6,7 @@ def build_data_notebook():
     cells = []
 
     # Title & Introduction
-    title_md = """# 0. Graph Traversal Dataset Generation and Topology Analysis
+    title_md = """# 0. Complex Graph Traversal Dataset Generation and Topology Analysis
 ## Empirical Characterization of Algorithmic DFS Traces and Underlying Graph Topologies
 
 ### Executive Summary & Educational Motivation
@@ -19,17 +19,21 @@ This notebook constructs a standardized procedural dataset of goal-terminated DF
 ### Mathematical Problem Formulation
 
 #### 1. Graph Generation and Adjacency Structure
-Let $G = (V, E)$ be an undirected, unweighted connected graph with $N$ nodes ($10 \\le N \\le 20$), where node identifiers are randomly permuted from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 19\\}$.
+Let $G = (V, E)$ be an undirected, unweighted connected graph with $N$ nodes ($20 \\le N \\le 35$), where node identifiers are randomly permuted from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 39\\}$.
 
 #### 2. Goal-Terminated DFS Traversal Trace
 A DFS agent starting at root node $s \\in V$ explores $G$ until it discovers destination node $g \\in V$. The search **terminates immediately** upon reaching $g$, yielding the trace:
 $$T = [t_1, t_2, \\dots, t_K]$$
-where $t_1 = s$, $t_K = g$, $t_k \\neq g$ for all $1 \\le k < K$, and $15 \\le K \\le 25$. Each adjacent transition $(t_k, t_{k+1})$ represents either a forward exploration step along an edge $e \\in E$ or a return step (backtracking to a parent node from a dead-end or fully explored branch).
+where $t_1 = s$, $t_K = g$, $t_k \\neq g$ for all $1 \\le k < K$, and $30 \\le K \\le 50$. Each adjacent transition $(t_k, t_{k+1})$ represents either a forward exploration step along an edge $e \\in E$ or a return step (backtracking to a parent node from a dead-end or fully explored branch).
 
-#### 3. Shortest Path Target
+#### 3. Node Backtraces and Induced Regressions
+In a DFS traversal, when $t_k = t_{k-2}$, the transition represents a return/backtrack step from dead-end or sub-branch node $t_{k-1}$ back to parent node $t_k$. We define the **Node Backtrace Count** $B(v)$ as the number of times node $v$ induced a regression during traversal:
+$$B(v) = \\sum_{k=3}^K \\mathbb{I}\\big(t_k = t_{k-2} \\text{ and } t_{k-1} = v\\big)$$
+
+#### 4. Shortest Path Target
 The true shortest path $P^*$ between $s$ and $g$ in $G_T$ (the graph reconstructed from trace $T$) is represented as:
 $$P^* = [p_1^*, p_2^*, \\dots, p_M^*]$$
-where $p_1^* = s$, $p_M^* = g$, and $4 \\le M \\le 10$.
+where $p_1^* = s$, $p_M^* = g$, and $10 \\le M \\le 20$.
 """
     cells.append(nbf.v4.new_markdown_cell(title_md))
 
@@ -89,38 +93,35 @@ DATASET_PATH = os.path.join(DATA_DIR, "graph_dfs_dataset.pt")
 
     # Cell 2: Procedural Dataset Generation Function
     cell2_md = """### Dataset Construction: Candidate-Filtered Goal-Terminated DFS Traces
-To guarantee rich reasoning challenges with explicit dead-ends and multi-branch exploration:
+To guarantee complex reasoning challenges with explicit dead-ends and multi-branch exploration:
 1. **Goal-Terminated Traversal**: DFS stops **immediately** upon discovering the goal node $g$, so $g$ appears **exactly once** at the final position (`trace[-1] == g`).
-2. **Synthetic Candidate Filtering**: We sample candidate graph instances and select $N=4,000$ samples that strictly satisfy:
-   - DFS Trace Length $K$: $15 \\le K \\le 25$
-   - Shortest Path Length $M$: $4 \\le M \\le 10$
-3. **Randomized Token Order**: Node identifiers are randomly permuted across $\\{0, 1, \\dots, 19\\}$ for every sample to eliminate label order shortcuts.
+2. **Hardened Target Length Bounds**:
+   - DFS Trace Length $K$: $30 \\le K \\le 50$
+   - Shortest Path Length $M$: $10 \\le M \\le 20$
+3. **Node Backtraces & Induced Regressions**: Track how many times each node induced a backtrack/regression step.
+4. **Randomized Token Order**: Node identifiers are randomly permuted across $\\{0, 1, \\dots, 39\\}$ for every sample.
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Procedural Candidate Sampling and Filtering
+    cell2_code = """# Cell 2: Procedural Candidate Sampling, Filtering, and Node Backtrace Metrics
 
-VOCAB_SIZE = 22
-PAD_TOKEN = 20
-STOP_TOKEN = 21
-MAX_SRC_LEN = 25
-MAX_TGT_LEN = 10
+VOCAB_SIZE = 42
+PAD_TOKEN = 40
+STOP_TOKEN = 41
+MAX_SRC_LEN = 50
+MAX_TGT_LEN = 21
 
-def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_trace_len=15, min_sp_len=4, max_sp_len=10):
-    for attempt in range(500):
+def generate_single_candidate(min_nodes=20, max_nodes=35, max_trace_len=50, min_trace_len=30, min_sp_len=10, max_sp_len=20):
+    for attempt in range(100):
         n = random.randint(min_nodes, max_nodes)
-        G = nx.Graph()
-        G.add_nodes_from(range(n))
+        G = nx.random_labeled_tree(n)
 
-        # Build connected random graph with branching (average degree 2.0 - 2.5)
-        num_edges = random.randint(n, int(n * 1.4))
-        while G.number_of_edges() < num_edges:
+        # Add random extra edges to create loops and alternate paths
+        extra_edges = random.randint(2, 6)
+        for _ in range(extra_edges):
             u, v = random.sample(range(n), 2)
             if u != v:
                 G.add_edge(u, v)
-
-        if not nx.is_connected(G):
-            continue
 
         start = random.choice(range(n))
         goal = random.choice([v for v in range(n) if v != start])
@@ -130,7 +131,7 @@ def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_
         visited = set()
         goal_reached = False
 
-        def dfs(u, parent=None):
+        def dfs(u):
             nonlocal goal_reached
             if goal_reached:
                 return
@@ -147,16 +148,13 @@ def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_
                 if goal_reached:
                     return
                 if v not in visited:
-                    dfs(v, u)
+                    dfs(v)
                     if not goal_reached:
                         trace.append(u) # Backtracking step
 
         dfs(start)
 
-        if not goal_reached:
-            continue
-
-        if trace[-1] != goal or trace.count(goal) != 1:
+        if not goal_reached or trace[-1] != goal or trace.count(goal) != 1:
             continue
 
         if not (min_trace_len <= len(trace) <= max_trace_len):
@@ -173,22 +171,32 @@ def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_
         sp = nx.shortest_path(G_trace, source=start, target=goal)
 
         if min_sp_len <= len(sp) <= max_sp_len:
-            # Token permutation
-            vocab = list(range(20))
+            # Backtrace metric calculation
+            backtracks = 0
+            node_backtraces = {node: 0 for node in G_trace.nodes()}
+            for i in range(2, len(trace)):
+                if trace[i] == trace[i-2]:
+                    backtracks += 1
+                    node_backtraces[trace[i-1]] += 1
+
+            # Token permutation over vocabulary of 40 node IDs
+            vocab = list(range(40))
             perm = random.sample(vocab, n)
             mapping = {i: perm[i] for i in range(n)}
 
             perm_trace = [mapping[x] for x in trace]
             perm_sp = [mapping[x] for x in sp]
             G_perm = nx.relabel_nodes(G_trace, mapping)
-            return perm_trace, perm_sp, G_perm, mapping
+            perm_node_backtraces = {mapping[k]: v for k, v in node_backtraces.items() if k in mapping}
+
+            return perm_trace, perm_sp, G_perm, mapping, backtracks, perm_node_backtraces
 
     return None
 
 def generate_filtered_dataset(target_samples=4000):
     dataset = []
     attempts = 0
-    max_attempts = target_samples * 20
+    max_attempts = target_samples * 10
     while len(dataset) < target_samples and attempts < max_attempts:
         sample = generate_single_candidate()
         attempts += 1
@@ -196,7 +204,7 @@ def generate_filtered_dataset(target_samples=4000):
             dataset.append(sample)
     return dataset
 
-print("Generating 4,000 candidate-filtered graph DFS samples...")
+print("Generating 4,000 candidate-filtered complex graph DFS samples (src: 30-50, tgt: 10-20)...")
 start_time = time.time()
 raw_data = generate_filtered_dataset(4000)
 print(f"Generated {len(raw_data)} samples in {time.time() - start_time:.2f} seconds.")
@@ -212,7 +220,7 @@ print(f"Splits constructed: Train={len(train_raw)}, Val={len(val_raw)}, Test={le
 
     # Cell 3: Save Dataset to Drive
     cell3_md = """### Dataset Serialization to Drive
-We serialize the raw processed dataset (including node traces, shortest path targets, NetworkX graph topologies, and token mappings) using PyTorch `torch.save()`.
+We serialize the raw processed dataset (including node traces, shortest path targets, NetworkX graph topologies, token mappings, and node backtrace metrics) using PyTorch `torch.save()`.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
@@ -237,15 +245,15 @@ print(f"Dataset successfully saved to '{DATASET_PATH}' ({file_size_mb:.2f} MB)."
 
     # Cell 4: Statistical & Topological Characterization
     cell4_md = """### Empirical Analysis of Dataset & Graph Topologies
-We compute key graph-theoretic and algorithmic trace properties across the entire dataset:
-1. **Node Degree Statistics**: Average, minimum, and maximum degrees ($\bar{k}$).
-2. **Path Compression Ratio**: $\eta = \text{Shortest Path Length } M / \text{DFS Trace Length } K$.
-3. **Dead-End & Backtrack Count**: Number of return transitions ($t_k = t_{k-2}$) in DFS exploration.
-4. **Graph Density & Clustering**: Structural connectivity metrics.
+We compute key graph-theoretic, algorithmic trace, and node regression properties across the entire dataset:
+1. **Node & Edge Statistics**: Node counts, edge counts, and average degree.
+2. **DFS Trace & Shortest Path Bounds**: Sequence lengths ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
+3. **Node Backtraces & Induced Regressions**: Count of return steps ($t_k = t_{k-2}$) and max regressions induced by individual nodes.
+4. **Path Compression Ratio**: $\\eta = \\text{Shortest Path Length } M / \\text{DFS Trace Length } K$.
 """
     cells.append(nbf.v4.new_markdown_cell(cell4_md))
 
-    cell4_code = """# Cell 4: Compute Comprehensive Graph Topological Statistics
+    cell4_code = """# Cell 4: Compute Comprehensive Graph Topological & Backtrace Statistics
 
 degrees = []
 node_counts = []
@@ -254,8 +262,9 @@ trace_lengths = []
 sp_lengths = []
 compression_ratios = []
 backtrack_counts = []
+max_regressions_per_node = []
 
-for trace, sp, G, mapping in raw_data:
+for trace, sp, G, mapping, backtracks, node_backtraces in raw_data:
     node_counts.append(G.number_of_nodes())
     edge_counts.append(G.number_of_edges())
 
@@ -267,36 +276,34 @@ for trace, sp, G, mapping in raw_data:
     trace_lengths.append(K)
     sp_lengths.append(M)
     compression_ratios.append(M / K)
-
-    # Compute backtracking steps in trace
-    backtracks = 0
-    for i in range(2, len(trace)):
-        if trace[i] == trace[i-2]:
-            backtracks += 1
     backtrack_counts.append(backtracks)
 
-print("=" * 65)
-print("             GRAPH & DFS TRAVERSAL DATASET STATISTICS")
-print("=" * 65)
-print(f"{'Metric':<35} | {'Mean ± Std':<15} | {'[Min, Max]':<10}")
-print("-" * 65)
-print(f"{'Node Count (N)':<35} | {np.mean(node_counts):.2f} ± {np.std(node_counts):.2f}   | [{np.min(node_counts)}, {np.max(node_counts)}]")
-print(f"{'Edge Count (|E|)':<35} | {np.mean(edge_counts):.2f} ± {np.std(edge_counts):.2f}   | [{np.min(edge_counts)}, {np.max(edge_counts)}]")
-print(f"{'Average Node Degree (<k>)':<35} | {np.mean(degrees):.2f} ± {np.std(degrees):.2f}   | [{np.min(degrees)}, {np.max(degrees)}]")
-print(f"{'DFS Trace Length (K)':<35} | {np.mean(trace_lengths):.2f} ± {np.std(trace_lengths):.2f}   | [{np.min(trace_lengths)}, {np.max(trace_lengths)}]")
-print(f"{'Shortest Path Length (M)':<35} | {np.mean(sp_lengths):.2f} ± {np.std(sp_lengths):.2f}   | [{np.min(sp_lengths)}, {np.max(sp_lengths)}]")
-print(f"{'Compression Ratio (M / K)':<35} | {np.mean(compression_ratios):.3f} ± {np.std(compression_ratios):.3f} | [{np.min(compression_ratios):.2f}, {np.max(compression_ratios):.2f}]")
-print(f"{'Backtracking Steps per Trace':<35} | {np.mean(backtrack_counts):.2f} ± {np.std(backtrack_counts):.2f}   | [{np.min(backtrack_counts)}, {np.max(backtrack_counts)}]")
-print("=" * 65)
+    max_reg = max(node_backtraces.values()) if node_backtraces else 0
+    max_regressions_per_node.append(max_reg)
+
+print("=" * 70)
+print("             HARDENED GRAPH & DFS TRAVERSAL DATASET STATISTICS")
+print("=" * 70)
+print(f"{'Metric':<38} | {'Mean ± Std':<15} | {'[Min, Max]':<10}")
+print("-" * 70)
+print(f"{'Node Count (N)':<38} | {np.mean(node_counts):.2f} ± {np.std(node_counts):.2f}   | [{np.min(node_counts)}, {np.max(node_counts)}]")
+print(f"{'Edge Count (|E|)':<38} | {np.mean(edge_counts):.2f} ± {np.std(edge_counts):.2f}   | [{np.min(edge_counts)}, {np.max(edge_counts)}]")
+print(f"{'Average Node Degree (<k>)':<38} | {np.mean(degrees):.2f} ± {np.std(degrees):.2f}   | [{np.min(degrees)}, {np.max(degrees)}]")
+print(f"{'DFS Trace Length (K) [Target 30-50]':<38} | {np.mean(trace_lengths):.2f} ± {np.std(trace_lengths):.2f}   | [{np.min(trace_lengths)}, {np.max(trace_lengths)}]")
+print(f"{'Shortest Path Length (M) [Target 10-20]':<38} | {np.mean(sp_lengths):.2f} ± {np.std(sp_lengths):.2f}   | [{np.min(sp_lengths)}, {np.max(sp_lengths)}]")
+print(f"{'Compression Ratio (M / K)':<38} | {np.mean(compression_ratios):.3f} ± {np.std(compression_ratios):.3f} | [{np.min(compression_ratios):.2f}, {np.max(compression_ratios):.2f}]")
+print(f"{'Total Backtracks per Trace':<38} | {np.mean(backtrack_counts):.2f} ± {np.std(backtrack_counts):.2f}   | [{np.min(backtrack_counts)}, {np.max(backtrack_counts)}]")
+print(f"{'Max Induced Regressions per Node':<38} | {np.mean(max_regressions_per_node):.2f} ± {np.std(max_regressions_per_node):.2f}   | [{np.min(max_regressions_per_node)}, {np.max(max_regressions_per_node)}]")
+print("=" * 70)
 """
     cells.append(nbf.v4.new_code_cell(cell4_code))
 
     # Cell 5: Publication Quality Analytical Visualizations
     cell5_md = """### Publication-Quality Analytical Plots
 We generate and save comprehensive visualizations characterizing graph topologies and DFS traces:
-1. **Sample Graph Topologies**: Visual NetworkX representations with start, goal, and shortest path overlays.
-2. **Degree & Length Distributions**: Histograms of node degrees, DFS trace lengths, and shortest path lengths (`charts/graph_topology_distributions.png`).
-3. **Trace Compression & Backtracking Analysis**: Scatter and distribution plots of trace compression efficiency and dead-end frequency (`charts/graph_dfs_compression_analysis.png`).
+1. **Degree & Length Distributions**: Histograms of node degrees, DFS trace lengths ($30 \\le K \\le 50$), and shortest path lengths ($10 \\le M \\le 20$) (`charts/graph_topology_distributions.png`).
+2. **Trace Efficiency & Backtracking Scatter**: Efficiency vs. total backtracks (`charts/graph_dfs_compression_analysis.png`).
+3. **Sample Graph Layouts & Original Input Sequences**: Rendering the NetworkX layout overlaid with the original input sequence both as text and in the visual chart.
 """
     cells.append(nbf.v4.new_markdown_cell(cell5_md))
 
@@ -313,12 +320,12 @@ axes[0].set_xlabel('Node Degree (k)', fontsize=11)
 axes[0].set_ylabel('Count', fontsize=11)
 
 sns.histplot(trace_lengths, discrete=True, kde=False, color='teal', ax=axes[1])
-axes[1].set_title('DFS Trace Length (K)', fontsize=12, fontweight='bold')
+axes[1].set_title('DFS Trace Length (K) [30-50]', fontsize=12, fontweight='bold')
 axes[1].set_xlabel('Trace Length (Tokens)', fontsize=11)
 axes[1].set_ylabel('Count', fontsize=11)
 
 sns.histplot(sp_lengths, discrete=True, kde=False, color='darkblue', ax=axes[2])
-axes[2].set_title('Shortest Path Length (M)', fontsize=12, fontweight='bold')
+axes[2].set_title('Shortest Path Length (M) [10-20]', fontsize=12, fontweight='bold')
 axes[2].set_xlabel('Path Length (Nodes)', fontsize=11)
 axes[2].set_ylabel('Count', fontsize=11)
 
@@ -333,11 +340,11 @@ plt.show()
 
 # Figure 2: Trace Compression & Backtracking Scatter Analysis
 fig, ax = plt.subplots(figsize=(8, 5))
-scatter = ax.scatter(trace_lengths, sp_lengths, c=backtrack_counts, cmap='viridis', alpha=0.7, s=50, edgecolors='none')
+scatter = ax.scatter(trace_lengths, sp_lengths, c=backtrack_counts, cmap='viridis', alpha=0.8, s=60, edgecolors='none')
 cbar = plt.colorbar(scatter, ax=ax)
-cbar.set_label('Backtracking Steps', fontsize=11, fontweight='bold')
+cbar.set_label('Total Backtracks in Trace', fontsize=11, fontweight='bold')
 
-ax.set_title('DFS Trace vs. Shortest Path Efficiency', fontsize=13, fontweight='bold', pad=12)
+ax.set_title('Hardened DFS Trace vs. Shortest Path Efficiency', fontsize=13, fontweight='bold', pad=12)
 ax.set_xlabel('DFS Traversal Trace Length (K)', fontsize=11, fontweight='bold')
 ax.set_ylabel('Target Shortest Path Length (M)', fontsize=11, fontweight='bold')
 
@@ -350,25 +357,39 @@ else:
     plt.savefig("graphs/charts/graph_dfs_compression_analysis.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-# Figure 3: Sample Graph Topology Layouts
-fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-for i in range(3):
-    trace_sample, sp_sample, G_sample, _ = raw_data[i]
+# Figure 3: Sample Graph Topology Layouts with Original Input Sequence Text and Visual Representation
+fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+for i in range(2):
+    trace_sample, sp_sample, G_sample, mapping_sample, backtracks_sample, node_backtracks_sample = raw_data[i]
     pos = nx.spring_layout(G_sample, seed=42+i)
 
+    # Base graph
     nx.draw_networkx_nodes(G_sample, pos, ax=axes[i], node_color='lightgray', node_size=500)
     nx.draw_networkx_edges(G_sample, pos, ax=axes[i], edge_color='silver', width=1.5)
 
+    # Highlight Shortest Path
     sp_edges = [(sp_sample[k], sp_sample[k+1]) for k in range(len(sp_sample)-1)]
     nx.draw_networkx_edges(G_sample, pos, ax=axes[i], edgelist=sp_edges, edge_color='#2b5c8f', width=3.0)
 
+    # Start and Goal
     nx.draw_networkx_nodes(G_sample, pos, ax=axes[i], nodelist=[sp_sample[0]], node_color='limegreen', node_size=650)
     nx.draw_networkx_nodes(G_sample, pos, ax=axes[i], nodelist=[sp_sample[-1]], node_color='crimson', node_size=650)
 
     labels = {node: str(node) for node in G_sample.nodes()}
-    nx.draw_networkx_labels(G_sample, pos, ax=axes[i], labels=labels, font_size=9, font_weight='bold')
+    nx.draw_networkx_labels(G_sample, pos, ax=axes[i], labels=labels, font_size=8, font_weight='bold')
 
-    axes[i].set_title(f"Sample {i+1}: K={len(trace_sample)}, M={len(sp_sample)}", fontsize=11, fontweight='bold')
+    # Format original input sequence as text
+    trace_text = f"Input DFS Sequence (K={len(trace_sample)}):\\n" + ", ".join(map(str, trace_sample[:25])) + "\\n" + ", ".join(map(str, trace_sample[25:]))
+    sp_text = f"Target Shortest Path (M={len(sp_sample)}): {sp_sample}"
+    backtrace_text = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtracks_sample.items())[:5])}"
+
+    # Text Box in Chart
+    axes[i].text(0.02, 0.02, f"{trace_text}\\n{sp_text}\\n{backtrace_text}",
+                 transform=axes[i].transAxes, fontsize=8.5, verticalalignment='bottom',
+                 bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+
+    axes[i].set_title(f"Sample {i+1}: DFS Trace K={len(trace_sample)} -> Shortest Path M={len(sp_sample)}", fontsize=11, fontweight='bold', pad=10)
     axes[i].axis('off')
 
 plt.tight_layout()
@@ -385,13 +406,13 @@ print("All publication-quality topology figures successfully generated and saved
     cells.append(nbf.v4.new_code_cell(cell5_code))
 
     # Cell 6: Summary & Reflection
-    cell6_md = """### Self-Reflection & Summary of Dataset Topology
-1. **Standardized Reusable Dataset**:
-   The generated dataset containing 4,000 candidate-filtered graph DFS instances is stored directly on Google Drive (`/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt`), ensuring complete reproducibility across all subsequent experiments.
-2. **Rich Dead-End and Branching Dynamics**:
-   On average, DFS traces exhibit $K \\approx 19.8$ steps to extract a shortest path of length $M \\approx 6.2$, with an average of $\\approx 6.8$ backtracking steps per trace. This guarantees non-trivial algorithmic exploration challenges.
-3. **Randomized Token Order Invariance**:
-   Node token permutations ensure models cannot memorize specific node index relationships, forcing them to learn the true underlying **graph connectivity and path extraction algorithm**.
+    cell6_md = """### Self-Reflection & Summary of Hardened Dataset Topology
+1. **Hardened Traversal Trajectories**:
+   The generated dataset containing 4,000 candidate-filtered graph DFS instances features sequence lengths bounded strictly to $30 \\le K \\le 50$ for input traces and $10 \\le M \\le 20$ for shortest paths.
+2. **Node Backtraces & Induced Regressions**:
+   We explicitly record backtrace counts and node-level induced regressions. This quantifies search difficulty and dead-end frequency across the traversal space.
+3. **Reproducibility & Drive Checkpointing**:
+   The dataset payload is serialized to `/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt` with local fallback, providing a shared foundation for model training.
 """
     cells.append(nbf.v4.new_markdown_cell(cell6_md))
 
