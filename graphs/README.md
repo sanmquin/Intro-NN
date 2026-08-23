@@ -1,77 +1,74 @@
 # Graph Shortest Path Extraction Benchmarks
 
-This directory contains research tutorials, procedural dataset generators, and Transformer architectures for extracting direct shortest paths from algorithmic execution traces (goal-terminated Depth-First Search traces).
+This directory contains research tutorials, procedural dataset generators, and Transformer architectures for extracting direct shortest paths from algorithmic execution traces (goal-terminated Random Walk traces).
 
 ---
 
-## 1. Complex Dataset Specification
+## 1. Complex Random Walk Dataset Specification
 
-The procedural dataset (`graphs/data/graph_dfs_dataset.pt`) is designed to evaluate transformer reasoning over deep search trees and multi-branch exploration traces.
+The procedural datasets (`graphs/data/graph_rw_easy_dataset.pt` and `graphs/data/graph_rw_hard_dataset.pt`) are generated using goal-terminated **Random Walk** traversals across two distinct graph topologies.
 
 ### Traversal Parameters & Sequence Bounds
-- **Input Traversal Trace ($T$)**: Goal-terminated 1D Depth-First Search (DFS) trace containing forward exploration and return/backtracking steps.
-  - **Sequence Length ($K$)**: $30 \le K \le 50$ (`MAX_SRC_LEN = 50`)
+- **Input Traversal Trace ($T$)**: Goal-terminated 1D Random Walk trace containing stochastic forward exploration and backtrack steps.
+  - **Sequence Length ($K$)**: $100 \le K \le 200$ (`MAX_SRC_LEN = 200`)
   - The destination node $g$ appears **exactly once** at the final position ($t_K = g$).
 - **Target Shortest Path ($P^*$)**: Direct shortest path connecting start node $s$ to destination node $g$.
-  - **Sequence Length ($M$)**: $10 \le M \le 20$ (`MAX_TGT_LEN = 21` including `STOP_TOKEN`)
+  - **Sequence Length ($M$)**: $20 \le M \le 50$ (`MAX_TGT_LEN = 51` including `STOP_TOKEN`)
 - **Vocabulary & Token Identifiers**:
-  - Node Identifier Vocabulary: Tokens `0` through `39` ($V = 40$ randomized node IDs per sample).
-  - Special Control Tokens: `PAD_TOKEN = 40`, `STOP_TOKEN = 41` (`VOCAB_SIZE = 42`).
+  - Node Identifier Vocabulary: Tokens `0` through `49` ($V = 50$ randomized node IDs per sample).
+  - Special Control Tokens: `PAD_TOKEN = 50`, `STOP_TOKEN = 51` (`VOCAB_SIZE = 52`).
 
-### Node Backtraces & Induced Regressions Metric
-During DFS traversal, whenever $t_k = t_{k-2}$, the transition represents a return step from dead-end or sub-branch node $t_{k-1}$ back to parent node $t_k$. We track two key metrics:
-1. **Total Backtrace Count**: Total return steps in the trace.
-2. **Node-Level Induced Regressions ($B(v)$)**: How many times node $v$ induced a backtrack/regression during traversal:
-   $$B(v) = \sum_{k=3}^K \mathbb{I}\big(t_k = t_{k-2} \text{ and } t_{k-1} = v\big)$$
+### Dataset Flavors
+1. **Easy Flavor (`graph_rw_easy_dataset.pt`)**:
+   - Sparse tree/path-like topologies with minimal cycle complexity and low vertex connectivity.
+2. **Hard Flavor (`graph_rw_hard_dataset.pt`)**:
+   - Dense 2D grid/lattice topologies with abundant local cycles and multi-path connectivity.
 
 ---
 
 ## 2. Mechanics of a Good Plan vs. a Bad Plan
 
-Sequential autoregressive rollout ($M \in [10, 20]$) over complex 1D traversal traces ($K \in [30, 50]$) evaluates the model's spatial planning and trajectory consistency.
+Sequential autoregressive rollout ($M \in [20, 50]$) over complex 1D Random Walk traces ($K \in [100, 200]$) evaluates the model's spatial planning and trajectory consistency.
 
 ### Good Plan Mechanics
-- **Cross-Attention Alignment**: The decoder attends to the correct contextual representations in the encoded DFS memory $H_{src}$, identifying true forward edge transitions.
+- **Cross-Attention Alignment**: The decoder attends to the correct contextual representations in the encoded Random Walk memory $H_{src}$, identifying true forward edge transitions.
 - **Valid Path Connectivity**: Each predicted step $p_m$ forms a valid edge $(p_{m-1}, p_m) \in E_G$ on the graph, terminating strictly at goal $g$.
-- **Adjacency Compression**: The model successfully filters out return steps ($t_k = t_{k-2}$) and dead-end subtrees embedded in $T$.
+- **Adjacency Compression**: The model successfully filters out redundant loop traversals and return steps embedded in $T$.
 
 ### Bad Plan Mechanics & Compounding Errors
-- **Early Prefix Errors**: In long target sequences ($M \in [10, 20]$), an incorrect token choice at early step $m$ introduces an off-path node into the causal decoder context.
-- **Compounding Error Propagation**: Once an invalid or off-path node is generated, the causal decoder state shifts into out-of-distribution space. Subsequent predictions fail to align with graph adjacencies, leading to premature termination or hallucinated path loops.
-- **Rollout Error Scaling**: Because sequence match requires $M$ consecutive correct decisions, exact path match probability scales exponentially:
+- **Early Prefix Errors**: In long target sequences ($M \in [20, 50]$), an incorrect token choice at early step $m$ introduces an off-path node into the causal decoder context.
+- **Compounding Error Propagation**: Once an invalid or off-path node is generated, the causal decoder state shifts into out-of-distribution space, leading to premature termination or hallucinated path loops.
+- **Rollout Error Scaling**:
   $$P(\text{Exact Match}) = \prod_{m=1}^M P(p_m^* \mid p_{<m}^*, T) \approx (1 - \epsilon)^M$$
-  With $M \ge 10$, even low token error rates $\epsilon \approx 0.05$ result in non-trivial rollout failure rates ($1 - 0.95^{15} \approx 53.7\%$).
 
 ---
 
 ## 3. Notebook Configuration & Training Controls
 
-`graphs/1.step_by_step_graph_shortest_path_tutorial.ipynb` includes explicit configuration controls in Cell 5:
+`graphs/1.step_by_step_graph_shortest_path_tutorial.ipynb` includes explicit configuration controls in Cell 1 & Cell 5:
 
 ```python
 config = {
-    "restart_training": False,   # Set to True to bypass saved checkpoints and start fresh from epoch 1
-    "run_full_training": False,  # Set to True to skip 'epochs_to_train' limit and run full 'total_epochs'
-    "resume_training": True,     # Resumes from latest checkpoint if restart_training is False
+    "dataset_flavor": "easy",       # Options: "easy" or "hard"
+    "dataset_prefix": "rw_easy",    # Dataset name prefix for checkpoint filenames
+    "model_size": "d64_l2_h4",      # Identifier for network size and architecture
+    "restart_training": False,     # Set to True to bypass saved checkpoints and start fresh
+    "run_full_training": False,    # Set to True to skip 'epochs_to_train' limit and run full 'total_epochs'
+    "resume_training": True,       # Resumes from latest checkpoint if restart_training is False
     "total_epochs": 10000,
     "save_every": 1000,
     "validate_every": 50,
-    "epochs_to_train": 20,       # Interactive execution chunk size
+    "epochs_to_train": 20,         # Interactive execution chunk size
     "learning_rate": 1e-3,
     "batch_size": 64
 }
 ```
 
-### Key Configuration Flags
-- **`restart_training`**:
-  - `True`: Ignores existing checkpoints in `checkpoints/` and initializes model weights fresh from epoch 1.
-  - `False`: Automatically attempts to load `ar_graph_transformer_latest.pt`.
-- **`run_full_training`**:
-  - `True`: Trains continuously up to `total_epochs` (e.g., 10,000 epochs) without stopping at `epochs_to_train`.
-  - `False`: Runs an interactive chunk of `epochs_to_train` (e.g., 20 epochs) for local verification.
-- **Periodic Validation & Checkpointing**:
-  - Validation runs **strictly every 50 epochs** (`validate_every = 50`).
-  - Model checkpoints are serialized every 1,000 epochs to Google Drive (`/content/drive/MyDrive/graph_checkpoints`) with local fallback (`checkpoints/`).
+### Key Configuration Flags & Multi-Checkpoint Storage
+- **`dataset_flavor` & `dataset_prefix`**:
+  - Selects between `graph_rw_easy_dataset.pt` and `graph_rw_hard_dataset.pt`.
+- **`model_size` & Checkpoint Prefixing**:
+  - Model checkpoints are automatically prefixed with dataset and network size tags (e.g., `ar_graph_rw_easy_d64_l2_h4_latest.pt` and `ar_graph_rw_easy_d64_l2_h4_epoch_1000.pt`), allowing side-by-side storage of checkpoints across different datasets and model architectures.
 
 ---
 
@@ -80,39 +77,12 @@ config = {
 - `0.graph_dataset_and_topology_analysis_tutorial.ipynb`: Dataset generation notebook and topological characterization.
 - `0.one_shot_graph_shortest_path_tutorial.ipynb`: One-Shot Non-Autoregressive Transformer tutorial.
 - `1.step_by_step_graph_shortest_path_tutorial.ipynb`: Step-by-Step Autoregressive Graph Shortest Path Transformer tutorial.
-- `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 (13.4% exact match) to Epoch 400 (80.0% exact match).
+- `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal analysis tutorial.
 - `generate_data_notebook.py`: Programmatic generator for Notebook 0.
 - `generate_notebook.py`: Programmatic generator for One-Shot Notebook.
 - `generate_ar_notebook.py`: Programmatic generator for Autoregressive Notebook.
 - `generate_mechanistic_notebook.py`: Programmatic generator for Mechanistic Analysis Notebook 2.
-- `data/graph_dfs_dataset.pt`: Pre-generated dataset payload.
-- `data/inference_dataset_epoch_300.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 300.
-- `data/inference_dataset_epoch_400.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 400.
+- `data/graph_rw_easy_dataset.pt`: Pre-generated Easy Random Walk dataset payload.
+- `data/graph_rw_hard_dataset.pt`: Pre-generated Hard Random Walk dataset payload.
 - `checkpoints/`: Local directory for model checkpoints.
 - `charts/`: Output visualization figures.
-
----
-
-## 5. Mechanistic Interpretability & Exported Inference Datasets
-
-Notebook `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb` analyzes the training phase transition between Epoch 300 and Epoch 400.
-
-### Key Mechanistic Findings
-- **Phase Transition Surge**: Autoregressive rollout exact match accuracy increases from **13.4%** at Epoch 300 to **80.0%** at Epoch 400 on the 500-sample validation set.
-- **Cross-Attention Sharpening**: Layer 1 cross-attention entropy drops sharply from **0.87 nats** to **0.40 nats**, reflecting learned precision in locating target step nodes within 1D DFS traces.
-- **Logit Margin Amplification**: Mean step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision margins.
-- **Transition Breakdown**: Out of 500 validation samples, **340 samples (68.0%)** improve from incorrect to correct exact matches, **60 samples (12.0%)** remain correct, **93 samples (18.6%)** remain failed, and **7 samples (1.4%)** regress.
-
-### Serialized Inference Datasets Schema
-Annotated evaluation datasets are exported to `data/inference_dataset_epoch_300.pt` and `data/inference_dataset_epoch_400.pt`. Each payload contains:
-- `metadata`: `{ 'epoch': int, 'num_samples': int (500), 'rollout_exact_match_acc': float, 'vocab_size': int (42) }`
-- `samples`: List of 500 sample dictionaries:
-  - `sample_id`: Sample index ($0 \le i < 500$)
-  - `input_trace`: `torch.Tensor` (long, `[K]`)
-  - `target_path`: `torch.Tensor` (long, `[M]`)
-  - `predicted_path`: `torch.Tensor` (long, `[M_pred]`)
-  - `exact_match`: `bool`
-  - `valid_path_connectivity`: `bool`
-  - `error_step_index`: `int` (First error token position, -1 if exact match)
-  - `topology`: `{ 'trace_len': int, 'sp_len': int, 'backtracks': int, 'num_nodes': int, 'num_edges': int, 'density': float }`
-  - `activations`: `{ 'memory_tensor': Tensor [K, 16], 'logit_margins': Tensor [M], 'cross_attn_entropies': Tensor [M], 'avg_memory_norm': float, 'avg_logit_margin': float, 'avg_cross_attn_entropy': float }`

@@ -7,37 +7,31 @@ def build_notebook():
 
     # Title & Introduction
     title_md = """# 0. One-Shot Graph Shortest Path Extraction Transformer
-## Structural Graph Representation Learning from Algorithmic DFS Traversal Traces
+## Structural Graph Representation Learning from Random Walk Traversal Traces
 
 ### Executive Summary & Educational Motivation
-Extracting spatial and structural information from raw algorithmic execution traces is a foundational challenge in neural algorithmic reasoning. When an agent or algorithm explores an unknown graph using **Depth-First Search (DFS)**, the resulting temporal trace contains both forward exploratory steps and return/backtracking steps.
+Extracting spatial and structural information from raw algorithmic execution traces is a foundational challenge in neural algorithmic reasoning. Replacing DFS with **Random Walk** traversals forces models to navigate stochastic node transitions, requiring robust structural graph reasoning to extract true shortest paths.
 
-In this tutorial, we demonstrate that a **One-Shot (Non-Autoregressive) Transformer** can process a complete 1D DFS traversal trace as an implicit graph specification and extract the direct shortest path between the start node and the destination node in a single parallel forward pass $\\mathcal{O}(1)$.
+In this tutorial, we demonstrate that a **One-Shot (Non-Autoregressive) Transformer** can process a complete 1D Random Walk traversal trace ($100 \\le K \\le 200$) as an implicit graph specification and extract the direct shortest path ($20 \\le M \\le 50$) between start node $s$ and goal $g$ in a single parallel forward pass $\\mathcal{O}(1)$.
 
 ---
 
 ### Mathematical Derivation & Problem Formulation
 
-#### 1. Graph Traversal and DFS Trace Representation
-Let $G = (V, E)$ be an undirected connected graph where $V$ is a set of $N$ nodes ($20 \\le N \\le 35$) labeled with randomized tokens from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 39\\}$.
+#### 1. Graph Traversal and Random Walk Representation
+Let $G = (V, E)$ be an undirected connected graph where $V$ is a set of $N$ nodes ($45 \\le N \\le 50$) labeled with randomized tokens from a fixed vocabulary $\\mathcal{V}_{nodes} = \\{0, 1, \\dots, 49\\}$.
 
-A Depth-First Search (DFS) algorithm starting at root node $s \\in V$ explores the graph and **terminates immediately upon reaching destination node $g$**. The generated sequential traversal trace is:
-$$T = [t_1, t_2, \\dots, t_K]$$
-where $t_1 = s$, $t_K = g$, and $g$ appears **exactly once** at position $K$. Each adjacent transition $(t_k, t_{k+1})$ represents either a forward exploration step along an edge $e \\in E$ or a return step (backtracking to a parent node from a dead end or fully explored branch).
-
-The input sequence length $K$ satisfies $30 \\le K \\le 50$.
+The input sequence length $K$ satisfies $100 \\le K \\le 200$.
 
 #### 2. Shortest Path Target Operator
-Given the start node $s = t_1$ and destination node $g = t_K$, the target sequence is the shortest path sequence $P^*$:
+Given start node $s$ and goal node $g$, target sequence is shortest path sequence $P^*$:
 $$P^* = [p_1^*, p_2^*, \\dots, p_M^*, \\text{STOP}]$$
-where $p_1^* = s$, $p_M^* = g$, and $M$ is the minimum path length ($10 \\le M \\le 20$).
+where $20 \\le M \\le 50$ (`MAX_TGT_LEN = 51` including `STOP` token).
 
 #### 3. Parallel One-Shot Cross-Attention Mechanism
-The **One-Shot Transformer** utilizes $M_{max}=21$ learned positional query embeddings $Q \\in \\mathbb{R}^{M_{max} \\times d}$ to query the encoded DFS trace representations $H_{src} \\in \\mathbb{R}^{K \\times d}$:
+The **One-Shot Transformer** utilizes $M_{max}=51$ learned positional query embeddings $Q \\in \\mathbb{R}^{M_{max} \\times d}$ to query encoded Random Walk trace representations $H_{src} \\in \\mathbb{R}^{K \\times d}$:
 
 $$\\text{Attention}(Q, K, V) = \\text{Softmax}\\left( \\frac{Q W_Q (H_{src} W_K)^T}{\\sqrt{d_k}} \\right) (H_{src} W_V)$$
-
-All output tokens $p_1, p_2, \\dots, p_{M_{max}}$ are projected and predicted simultaneously in parallel.
 """
     cells.append(nbf.v4.new_markdown_cell(title_md))
 
@@ -60,11 +54,11 @@ import networkx as nx
 if os.path.basename(os.getcwd()) == "graphs":
     os.makedirs("../charts", exist_ok=True)
     os.makedirs("charts", exist_ok=True)
-    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
+    LOCAL_DATA_PATH = "data/graph_rw_easy_dataset.pt"
 else:
     os.makedirs("charts", exist_ok=True)
     os.makedirs("graphs/charts", exist_ok=True)
-    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
+    LOCAL_DATA_PATH = "graphs/data/graph_rw_easy_dataset.pt"
 
 torch.set_num_threads(1)
 
@@ -83,11 +77,11 @@ print(f"Environment initialized successfully. Running on: {device}")
 
     # Cell 2: Import Dataset
     cell2_md = """### Dataset Loading & Preprocessing
-We load the pre-generated dataset containing $30 \\le K \\le 50$ DFS traversal traces and $10 \\le M \\le 20$ target shortest paths.
+Loads the Random Walk dataset ($100 \\le K \\le 200$, $20 \\le M \\le 50$).
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Load Pre-generated Complex Dataset
+    cell2_code = """# Cell 2: Load Pre-generated Dataset
 
 if not os.path.exists(LOCAL_DATA_PATH):
     raise FileNotFoundError(f"Dataset file not found at '{LOCAL_DATA_PATH}'. Please run Notebook 0 first.")
@@ -97,11 +91,11 @@ train_raw = dataset_payload['train']
 val_raw = dataset_payload['val']
 test_raw = dataset_payload['test']
 
-VOCAB_SIZE = dataset_payload.get('vocab_size', 42)
-PAD_TOKEN = dataset_payload.get('pad_token', 40)
-STOP_TOKEN = dataset_payload.get('stop_token', 41)
-MAX_SRC_LEN = dataset_payload.get('max_src_len', 50)
-MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 21)
+VOCAB_SIZE = dataset_payload.get('vocab_size', 52)
+PAD_TOKEN = dataset_payload.get('pad_token', 50)
+STOP_TOKEN = dataset_payload.get('stop_token', 51)
+MAX_SRC_LEN = dataset_payload.get('max_src_len', 200)
+MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 51)
 
 print(f"Loaded dataset: Train={len(train_raw)}, Val={len(val_raw)}, Test={len(test_raw)}")
 print(f"Params: VOCAB_SIZE={VOCAB_SIZE}, MAX_SRC_LEN={MAX_SRC_LEN}, MAX_TGT_LEN={MAX_TGT_LEN}")
@@ -110,13 +104,13 @@ print(f"Params: VOCAB_SIZE={VOCAB_SIZE}, MAX_SRC_LEN={MAX_SRC_LEN}, MAX_TGT_LEN=
 
     # Cell 3: PyTorch Dataset Class
     cell3_md = """### PyTorch Dataset & DataLoader
-Pads input DFS sequences up to `MAX_SRC_LEN=50` and target shortest paths up to `MAX_TGT_LEN=21`.
+Pads input sequences up to `MAX_SRC_LEN=200` and target shortest paths up to `MAX_TGT_LEN=51`.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
     cell3_code = """# Cell 3: Dataset Class Definition
 
-class GraphDFSDataset(Dataset):
+class GraphRWDataset(Dataset):
     def __init__(self, raw_data, max_src_len=MAX_SRC_LEN, max_tgt_len=MAX_TGT_LEN):
         self.samples = []
         for item in raw_data:
@@ -124,11 +118,9 @@ class GraphDFSDataset(Dataset):
             backtracks = item[4] if len(item) > 4 else 0
             node_backtraces = item[5] if len(item) > 5 else {}
 
-            # Pad SRC
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
-            src_mask = [0 if t != PAD_TOKEN else 1 for t in src]
+            src_mask = [False if t != PAD_TOKEN else True for t in src]
 
-            # Pad TGT
             tgt = list(sp) + [STOP_TOKEN]
             tgt = tgt + [PAD_TOKEN] * (max_tgt_len - len(tgt))
 
@@ -160,9 +152,9 @@ def graph_oneshot_collate_fn(batch):
     node_backtraces = [item[7] for item in batch]
     return src, src_mask, tgt, traces, sps, graphs, backtracks, node_backtraces
 
-train_dataset = GraphDFSDataset(train_raw)
-val_dataset = GraphDFSDataset(val_raw)
-test_dataset = GraphDFSDataset(test_raw)
+train_dataset = GraphRWDataset(train_raw)
+val_dataset = GraphRWDataset(val_raw)
+test_dataset = GraphRWDataset(test_raw)
 
 train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=graph_oneshot_collate_fn)
 val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=graph_oneshot_collate_fn)
@@ -174,14 +166,14 @@ print(f"DataLoaders prepared. Batch size: 64")
 
     # Cell 4: Model Definition
     cell4_md = """### One-Shot Graph Transformer Architecture
-The `OneShotGraphTransformer` uses $M_{max}=21$ learnable target query embeddings to extract target shortest paths in parallel.
+The `OneShotGraphTransformer` uses $M_{max}=51$ learnable target query embeddings to extract target shortest paths in parallel.
 """
     cells.append(nbf.v4.new_markdown_cell(cell4_md))
 
     cell4_code = """# Cell 4: Model Definition
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=100):
+    def __init__(self, d_model, max_len=250):
         super(PositionalEncoding, self).__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -200,7 +192,7 @@ class OneShotGraphTransformer(nn.Module):
         self.max_tgt_len = max_tgt_len
 
         self.token_embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_TOKEN)
-        self.pos_encoder = PositionalEncoding(embed_dim, max_len=100)
+        self.pos_encoder = PositionalEncoding(embed_dim, max_len=250)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
@@ -385,7 +377,7 @@ print(f"\\nTraining complete in {total_train_time:.2f} seconds.")
 
     # Cell 7: Test Benchmark
     cell7_md = """### Test Dataset Benchmark Summary
-Benchmark evaluation on unseen test traces ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
+Benchmark evaluation on unseen test traces ($100 \\le K \\le 200$, $20 \\le M \\le 50$).
 """
     cells.append(nbf.v4.new_markdown_cell(cell7_md))
 
@@ -416,7 +408,6 @@ Generates analytical figures including original input trace sequences formatted 
 
 sns.set_theme(style="whitegrid", palette="mako")
 
-# Chart 1: Training Trajectories
 fig, ax1 = plt.subplots(figsize=(10, 5))
 
 color = 'tab:blue'
@@ -440,64 +431,11 @@ ax1.legend(lines, labels, loc='center right', frameon=True, facecolor='white', f
 plt.title('One-Shot Graph Transformer: Training Trajectories', fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
 if os.path.basename(os.getcwd()) == "graphs":
-    plt.savefig("../charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("../charts/graph_rw_oneshot_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/graph_rw_oneshot_training_curves.png", dpi=300, bbox_inches='tight')
 else:
-    plt.savefig("charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("graphs/charts/graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
-plt.show()
-
-# Chart 2: Sample Graph Shortest Path Extraction
-sample_src, sample_mask, sample_tgt, sample_trace, sample_sp, G_sample, backtracks_sample, node_backtraces_sample = test_dataset[0]
-
-model.eval()
-with torch.no_grad():
-    sample_src_b = sample_src.unsqueeze(0).to(device)
-    sample_mask_b = sample_mask.unsqueeze(0).to(device)
-    pred_logits, _ = model(sample_src_b, src_key_padding_mask=sample_mask_b)
-    pred_tokens = torch.argmax(pred_logits[0], dim=-1).cpu().tolist()
-    clean_pred = []
-    for p in pred_tokens:
-        if p in (STOP_TOKEN, PAD_TOKEN):
-            break
-        clean_pred.append(p)
-
-plt.figure(figsize=(10, 7))
-pos = nx.spring_layout(G_sample, seed=42)
-
-nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=550)
-nx.draw_networkx_edges(G_sample, pos, edge_color='silver', width=1.5)
-
-sp_edges = [(sample_sp[i], sample_sp[i+1]) for i in range(len(sample_sp)-1)]
-nx.draw_networkx_edges(G_sample, pos, edgelist=sp_edges, edge_color='#2b5c8f', width=3.5, label='True Shortest Path')
-
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[0]], node_color='limegreen', node_size=750, label='Start Node')
-nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[-1]], node_color='crimson', node_size=750, label='Goal Node')
-
-labels = {node: str(node) for node in G_sample.nodes()}
-nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='bold')
-
-# Text box with full original sequence
-trace_str = f"Original Input DFS Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
-sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
-pred_str = f"Model Predicted Path: {clean_pred}"
-backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtraces_sample.items())[:5])}"
-
-plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{backtrack_str}",
-               fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
-
-plt.title("One-Shot Shortest Path Extraction Layout", fontsize=13, fontweight='bold', pad=15)
-plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
-plt.axis('off')
-plt.tight_layout()
-plt.subplots_adjust(bottom=0.25)
-
-if os.path.basename(os.getcwd()) == "graphs":
-    plt.savefig("../charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
-    plt.savefig("charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
-else:
-    plt.savefig("charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
-    plt.savefig("graphs/charts/graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+    plt.savefig("charts/graph_rw_oneshot_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig("graphs/charts/graph_rw_oneshot_training_curves.png", dpi=300, bbox_inches='tight')
 plt.show()
 
 print("One-shot analytical figures successfully generated and saved.")
@@ -506,10 +444,8 @@ print("One-shot analytical figures successfully generated and saved.")
 
     # Cell 9: Summary
     cell9_md = """### Self-Reflection & Summary
-1. **Hardened Traversal Parallel Extraction**:
-   Evaluated One-Shot extraction on input sequence traces of length $30 \\le K \\le 50$ with shortest paths of length $10 \\le M \\le 20$.
-2. **Backtrace Sensitivity**:
-   Parallel query cross-attention routes over input DFS traces to extract spatial shortest paths amidst node backtraces and dead-ends.
+1. **Random Walk Traversal Extraction**:
+   Evaluated One-Shot extraction on Random Walk input sequence traces of length $100 \\le K \\le 200$ with shortest paths of length $20 \\le M \\le 50$.
 """
     cells.append(nbf.v4.new_markdown_cell(cell9_md))
 
