@@ -12,14 +12,14 @@ def build_ar_notebook():
 ### Executive Summary & Educational Motivation
 Extracting structural path information from complex, noisy algorithmic execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
 
-In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated Depth-First Search (DFS) traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The model learns to parse forward exploration and backtracking steps in 1D traces to extract the direct shortest path sequentially.
+In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated traversal traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The notebook supports dynamic dataset switching between **Random Walk (`rw`)** and **Depth-First Search (`dfs`)** traversal traces, alongside multi-size network configurations (`small`, `base`, `large`) and dataset-prefixed checkpoint serialization.
 
 ---
 
 ### Mathematical Problem Formulation
 
-#### 1. Input DFS Trace Encoding
-Given an input DFS traversal trace $T = [t_1, t_2, \\dots, t_K]$ ($30 \\le K \\le 50$) where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
+#### 1. Input Traversal Trace Encoding
+Given an input traversal trace $T = [t_1, t_2, \\dots, t_K]$ ($30 \\le K \\le 50$) where $t_1 = s$ and $t_K = g$, the Transformer Encoder maps token embeddings into contextual representations:
 $$H_{src} = \\text{Encoder}\\Big(E(T) + P(T)\\Big) \\in \\mathbb{R}^{K \\times d_{model}}$$
 
 #### 2. Causal Autoregressive Decoding & Plan Mechanics
@@ -54,13 +54,13 @@ if os.path.basename(os.getcwd()) == "graphs":
     os.makedirs("../charts", exist_ok=True)
     os.makedirs("charts", exist_ok=True)
     os.makedirs("checkpoints", exist_ok=True)
-    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
+    LOCAL_DATA_DIR = "data"
     LOCAL_CKPT_DIR = "checkpoints"
 else:
     os.makedirs("charts", exist_ok=True)
     os.makedirs("graphs/charts", exist_ok=True)
     os.makedirs("graphs/checkpoints", exist_ok=True)
-    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
+    LOCAL_DATA_DIR = "graphs/data"
     LOCAL_CKPT_DIR = "graphs/checkpoints"
 
 torch.set_num_threads(1)
@@ -80,34 +80,53 @@ def setup_drive_paths():
     try:
         from google.colab import drive
         drive.mount('/content/drive')
-        data_path = "/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt"
+        data_dir = "/content/drive/MyDrive/graph_data"
         ckpt_dir = "/content/drive/MyDrive/graph_checkpoints"
     except ImportError:
-        data_path = LOCAL_DATA_PATH
+        data_dir = LOCAL_DATA_DIR
         ckpt_dir = LOCAL_CKPT_DIR
 
     os.makedirs(ckpt_dir, exist_ok=True)
-    print(f"Dataset path: {data_path}")
-    print(f"Checkpoints path: {ckpt_dir}")
-    return data_path, ckpt_dir
+    print(f"Data directory: {data_dir}")
+    print(f"Checkpoints directory: {ckpt_dir}")
+    return data_dir, ckpt_dir
 
-DATASET_PATH, CKPT_DIR = setup_drive_paths()
+DATA_DIR, CKPT_DIR = setup_drive_paths()
 """
     cells.append(nbf.v4.new_code_cell(cell1_code))
 
-    # Cell 2: Dataset Loading
+    # Cell 2: Dataset Loading & PyTorch Dataset Definition
     cell2_md = """### Dataset Loading & PyTorch Dataset Class
 Loads the pre-generated complex dataset ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
-- `src`: Input DFS trace padded to `MAX_SRC_LEN=50` with `PAD_TOKEN=40`.
+Supports switching dataset flavor (`rw` or `dfs`) dynamically via `config["dataset_flavor"]`.
+- `src`: Input traversal trace padded to `MAX_SRC_LEN=50` with `PAD_TOKEN=40`.
 - `tgt`: Shortest path with `STOP_TOKEN=41` padded to `MAX_TGT_LEN=21` with `PAD_TOKEN=40`.
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Import Hardened Dataset & Define PyTorch Dataset
+    cell2_code = """# Cell 2: Configurable Dataset Loading & PyTorch Dataset Definition
+
+config = {
+    "dataset_flavor": "rw",      # 'rw' for Random Walk or 'dfs' for Depth-First Search
+    "model_size": "base",        # 'small', 'base', or 'large'
+    "restart_training": False,   # Set to True to skip existing checkpoints and start fresh
+    "run_full_training": False,  # Set to True to train for total_epochs ignoring epochs_to_train
+    "resume_training": True,     # Resumes from latest checkpoint if restart_training is False
+    "total_epochs": 10000,
+    "save_every": 1000,
+    "validate_every": 50,
+    "epochs_to_train": 20,       # Interactive execution chunk size
+    "learning_rate": 1e-3,
+    "batch_size": 64
+}
+
+dataset_filename = f"graph_{config['dataset_flavor']}_dataset.pt"
+DATASET_PATH = os.path.join(DATA_DIR, dataset_filename)
 
 if not os.path.exists(DATASET_PATH):
-    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run Notebook 0 to generate the dataset.")
+    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset notebook to generate '{dataset_filename}'.")
 
+print(f"Loading dataset payload from '{DATASET_PATH}' (Flavor: {config['dataset_flavor'].upper()})...")
 dataset_payload = torch.load(DATASET_PATH, weights_only=False)
 train_raw = dataset_payload['train']
 val_raw = dataset_payload['val']
@@ -119,7 +138,7 @@ STOP_TOKEN = dataset_payload.get('stop_token', 41)
 MAX_SRC_LEN = dataset_payload.get('max_src_len', 50)
 MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 21)
 
-class GraphDFSARDataset(Dataset):
+class GraphARDataset(Dataset):
     def __init__(self, raw_data, max_src_len=MAX_SRC_LEN, max_tgt_len=MAX_TGT_LEN):
         self.samples = []
         self.raw_data = raw_data
@@ -128,11 +147,9 @@ class GraphDFSARDataset(Dataset):
             backtracks = item[4] if len(item) > 4 else 0
             node_backtraces = item[5] if len(item) > 5 else {}
 
-            # Pad SRC
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
             src_mask = [False if t != PAD_TOKEN else True for t in src]
 
-            # Pad TGT
             tgt = list(sp) + [STOP_TOKEN]
             tgt = tgt + [PAD_TOKEN] * (max_tgt_len - len(tgt))
             tgt_mask = [False if t != PAD_TOKEN else True for t in tgt]
@@ -167,29 +184,37 @@ def graph_ar_collate_fn(batch):
     node_backtraces = [item[8] for item in batch]
     return src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces
 
-train_dataset = GraphDFSARDataset(train_raw)
-val_dataset = GraphDFSARDataset(val_raw)
-test_dataset = GraphDFSARDataset(test_raw)
+train_dataset = GraphARDataset(train_raw)
+val_dataset = GraphARDataset(val_raw)
+test_dataset = GraphARDataset(test_raw)
 
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=graph_ar_collate_fn)
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=graph_ar_collate_fn)
-test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=graph_ar_collate_fn)
+train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=graph_ar_collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=graph_ar_collate_fn)
+test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=graph_ar_collate_fn)
 
-print(f"Datasets loaded successfully: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"Datasets loaded successfully ({config['dataset_flavor'].upper()}): Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
 """
     cells.append(nbf.v4.new_code_cell(cell2_code))
 
     # Cell 3: Model Architecture
     cell3_md = """### Step-by-Step Autoregressive Graph Transformer Architecture
-The `AutoregressiveGraphTransformer` architecture is kept **strictly unchanged**:
+The `AutoregressiveGraphTransformer` architecture supports dynamic network sizes (`small`, `base`, `large`):
 1. **Positional Encoding Layer**: Sinusoidal positional embeddings.
-2. **Encoder**: 2-layer Multi-Head Self-Attention over padded input trace ($K \\le 50$).
-3. **Causal Decoder**: 2-layer Multi-Head Decoder with cross-attention and triangular causal mask.
+2. **Encoder**: Multi-Head Self-Attention over padded input trace ($K \\le 50$).
+3. **Causal Decoder**: Multi-Head Decoder with cross-attention and triangular causal mask.
 4. **Output Head**: Linear projection to vocabulary logits $\\in \\mathbb{R}^{42}$.
 """
     cells.append(nbf.v4.new_markdown_cell(cell3_md))
 
-    cell3_code = """# Cell 3: Model Architecture Definition (Strictly Unchanged)
+    cell3_code = """# Cell 3: Model Architecture Definition & Network Sizing Configurations
+
+MODEL_SIZES = {
+    'small': {'embed_dim': 32, 'num_heads': 2, 'hidden_dim': 64, 'num_layers': 1},
+    'base': {'embed_dim': 64, 'num_heads': 4, 'hidden_dim': 128, 'num_layers': 2},
+    'large': {'embed_dim': 128, 'num_heads': 8, 'hidden_dim': 256, 'num_layers': 4}
+}
+
+model_size_params = MODEL_SIZES.get(config.get("model_size", "base"), MODEL_SIZES['base'])
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=100):
@@ -297,9 +322,16 @@ class AutoregressiveGraphTransformer(nn.Module):
 
         return curr_seqs
 
-model = AutoregressiveGraphTransformer().to(device)
+model = AutoregressiveGraphTransformer(
+    vocab_size=VOCAB_SIZE,
+    embed_dim=model_size_params['embed_dim'],
+    num_heads=model_size_params['num_heads'],
+    hidden_dim=model_size_params['hidden_dim'],
+    num_layers=model_size_params['num_layers']
+).to(device)
+
 total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-print(f"AutoregressiveGraphTransformer initialized. Total Parameters: {total_params:,}")
+print(f"AutoregressiveGraphTransformer ({config['dataset_flavor'].upper()}, Size: {config['model_size']}) initialized. Total Parameters: {total_params:,}")
 """
     cells.append(nbf.v4.new_code_cell(cell3_code))
 
@@ -387,33 +419,20 @@ print("Evaluation functions loaded.")
 """
     cells.append(nbf.v4.new_code_cell(cell4_code))
 
-    # Cell 5: Training Loop with Config Controls
-    cell5_md = """### Configurable Training Loop with Restart & Full-Training Support
-The `config` dictionary includes explicit controls:
-- `"restart_training"`: When `True`, skips loading previous checkpoints and starts fresh from epoch 1.
-- `"run_full_training"`: When `True`, skips the `epochs_to_train` constraint and trains for the full `total_epochs`.
-- `"resume_training"`: When `True` (and `restart_training` is `False`), automatically resumes from the latest checkpoint.
-- `"validate_every"`: Validation runs **strictly every 50 epochs**.
+    # Cell 5: Training Loop with Dataset & Size Prefixed Checkpointing
+    cell5_md = """### Configurable Training Loop with Dynamic Checkpoint Naming
+Checkpoints are serialized using prefixes identifying dataset flavor and model size:
+`ar_graph_transformer_{dataset_flavor}_{model_size}_latest.pt`
 """
     cells.append(nbf.v4.new_markdown_cell(cell5_md))
 
-    cell5_code = """# Cell 5: Training Loop with Config Controls (restart_training & run_full_training)
+    cell5_code = """# Cell 5: Training Loop with Dynamic Dataset & Network Size Checkpoint Prefixes
 
-config = {
-    "restart_training": False,   # Set to True to skip existing checkpoints and start fresh
-    "run_full_training": False,  # Set to True to train for total_epochs ignoring epochs_to_train
-    "resume_training": True,     # Resumes from latest checkpoint if restart_training is False
-    "total_epochs": 10000,
-    "save_every": 1000,
-    "validate_every": 50,
-    "epochs_to_train": 20,       # Interactive execution chunk size
-    "learning_rate": 1e-3,
-    "batch_size": 64
-}
+ckpt_prefix = f"ar_graph_transformer_{config['dataset_flavor']}_{config['model_size']}"
+latest_ckpt_path = os.path.join(CKPT_DIR, f"{ckpt_prefix}_latest.pt")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"], weight_decay=1e-4)
 
-latest_ckpt_path = os.path.join(CKPT_DIR, "ar_graph_transformer_latest.pt")
 start_epoch = 1
 history = {
     'train_loss': [],
@@ -442,7 +461,7 @@ elif config.get("resume_training", True) and os.path.exists(latest_ckpt_path):
         print(f"Checkpoint incompatible ({e}). Starting fresh training from epoch 1...")
         start_epoch = 1
 else:
-    print("Starting training from scratch...")
+    print(f"Starting training from scratch for configuration '{ckpt_prefix}'...")
 
 # Determine end epoch based on run_full_training
 if config.get("run_full_training", False):
@@ -517,7 +536,7 @@ for epoch in range(start_epoch, end_epoch + 1):
         }
         torch.save(checkpoint_payload, latest_ckpt_path)
         if epoch % config["save_every"] == 0:
-            versioned_path = os.path.join(CKPT_DIR, f"ar_graph_transformer_epoch_{epoch}.pt")
+            versioned_path = os.path.join(CKPT_DIR, f"{ckpt_prefix}_epoch_{epoch}.pt")
             torch.save(checkpoint_payload, versioned_path)
             print(f"Saved versioned checkpoint: '{versioned_path}'")
 
@@ -539,7 +558,7 @@ test_loss, test_tf_acc, test_exact_match, test_path_validity = evaluate_model(
 )
 
 print("=" * 65)
-print("       HELD-OUT TEST SET EVALUATION SUMMARY")
+print(f"  HELD-OUT TEST SET EVALUATION SUMMARY ({config['dataset_flavor'].upper()} - {config['model_size'].upper()})")
 print("=" * 65)
 print(f"{'Evaluation Metric':<35} | {'Model Score':<15}")
 print("-" * 65)
@@ -554,8 +573,8 @@ print("=" * 65)
     # Cell 7: Visualizations with Original Input Sequence Text & Chart
     cell7_md = """### Publication-Quality Visualizations & Sample Analysis
 Generates:
-1. **Training & Validation Loss Curves** (`charts/ar_graph_dfs_training_curves.png`).
-2. **Sample Graph Shortest Path Rollout**: Includes the **original input sequence both in text format and in the visual chart layout**, alongside true vs. predicted path overlays and node backtrace counts (`charts/ar_graph_dfs_sample_visualization.png`).
+1. **Training & Validation Loss Curves** (`charts/ar_graph_{dataset_flavor}_training_curves.png`).
+2. **Sample Graph Shortest Path Rollout**: Includes the **original input sequence both in text format and in the visual chart layout**, alongside true vs. predicted path overlays and node backtrace counts (`charts/ar_graph_{dataset_flavor}_sample_visualization.png`).
 """
     cells.append(nbf.v4.new_markdown_cell(cell7_md))
 
@@ -589,14 +608,15 @@ else:
 labels = [l.get_label() for l in lines]
 ax1.legend(lines, labels, loc='center right', frameon=True, facecolor='white', framealpha=0.9)
 
-plt.title('Autoregressive Graph Transformer: Training Trajectories', fontsize=14, fontweight='bold', pad=15)
+plt.title(f'Autoregressive Graph Transformer ({config["dataset_flavor"].upper()}): Training Trajectories', fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
+fig_filename_1 = f"ar_graph_{config['dataset_flavor']}_training_curves.png"
 if os.path.basename(os.getcwd()) == "graphs":
-    plt.savefig("../charts/ar_graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("charts/ar_graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"../charts/{fig_filename_1}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"charts/{fig_filename_1}", dpi=300, bbox_inches='tight')
 else:
-    plt.savefig("charts/ar_graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
-    plt.savefig("graphs/charts/ar_graph_dfs_training_curves.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"charts/{fig_filename_1}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"graphs/charts/{fig_filename_1}", dpi=300, bbox_inches='tight')
 plt.show()
 
 # Chart 2: Sample Graph Shortest Path Rollout with Original Sequence Text and Visual Layout
@@ -627,7 +647,7 @@ labels = {node: str(node) for node in G_sample.nodes()}
 nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='bold')
 
 # Formatted original sequence text block
-trace_str = f"Original Input DFS Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
+trace_str = f"Original Input {config['dataset_flavor'].upper()} Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
 sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
 pred_str = f"Autoregressive Predicted Path: {pred_rollout}"
 backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtraces_sample.items())[:5])}"
@@ -635,18 +655,19 @@ backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dic
 plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{backtrack_str}",
                fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
 
-plt.title("Autoregressive Shortest Path Prediction Layout", fontsize=13, fontweight='bold', pad=15)
+plt.title(f"Autoregressive Shortest Path Prediction Layout ({config['dataset_flavor'].upper()})", fontsize=13, fontweight='bold', pad=15)
 plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
 plt.axis('off')
 plt.tight_layout()
 plt.subplots_adjust(bottom=0.25)
 
+fig_filename_2 = f"ar_graph_{config['dataset_flavor']}_sample_visualization.png"
 if os.path.basename(os.getcwd()) == "graphs":
-    plt.savefig("../charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
-    plt.savefig("charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"../charts/{fig_filename_2}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"charts/{fig_filename_2}", dpi=300, bbox_inches='tight')
 else:
-    plt.savefig("charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
-    plt.savefig("graphs/charts/ar_graph_dfs_sample_visualization.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"charts/{fig_filename_2}", dpi=300, bbox_inches='tight')
+    plt.savefig(f"graphs/charts/{fig_filename_2}", dpi=300, bbox_inches='tight')
 plt.show()
 
 print("Publication-quality figures generated and saved.")
@@ -657,7 +678,7 @@ print("Publication-quality figures generated and saved.")
     cell8_md = """### Self-Reflection & Mechanics of Good vs. Bad Plans
 
 1. **Impact of Hardened Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$)**:
-   Increasing input DFS trace length to 30-50 tokens and shortest path target length to 10-20 steps significantly increases sequential reasoning complexity. The model must process deep search trees with multiple backtrace regressions.
+   Increasing input traversal trace length to 30-50 tokens and shortest path target length to 10-20 steps significantly increases sequential reasoning complexity. The model must process stochastic or tree-structured traces with multiple backtrace regressions.
 2. **Mechanics of a Good Plan vs. a Bad Plan**:
    - **Good Plan**: The autoregressive decoder successfully attends to valid cross-attention memory transitions, predicting step $p_m$ aligned with the graph adjacency matrix $A$.
    - **Bad Plan & Compounding Errors**: In long target sequences ($M \\in [10, 20]$), an early prediction error at step $m$ feeds an off-path token back into the causal decoder context. This causes compounding errors where the model loses spatial trajectory context and fails rollout exact match.
