@@ -64,9 +64,21 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import networkx as nx
 
-# Ensure charts directory exists
-os.makedirs("charts", exist_ok=True)
-os.makedirs("graphs/charts", exist_ok=True)
+# Ensure directories exist relative to CWD
+if os.path.basename(os.getcwd()) == "graphs":
+    os.makedirs("../charts", exist_ok=True)
+    os.makedirs("charts", exist_ok=True)
+    os.makedirs("checkpoints", exist_ok=True)
+    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
+    LOCAL_CKPT_DIR = "checkpoints"
+    CHART_PATHS = ["../charts", "charts"]
+else:
+    os.makedirs("charts", exist_ok=True)
+    os.makedirs("graphs/charts", exist_ok=True)
+    os.makedirs("graphs/checkpoints", exist_ok=True)
+    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
+    LOCAL_CKPT_DIR = "graphs/checkpoints"
+    CHART_PATHS = ["charts", "graphs/charts"]
 
 # Set PyTorch CPU thread count to 1 for optimal single-core performance
 torch.set_num_threads(1)
@@ -80,18 +92,31 @@ def set_seed(seed=42):
 
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Google Drive Mount & Path Resolution
+def setup_drive_paths():
+    try:
+        from google.colab import drive
+        drive.mount('/content/drive')
+        data_path = "/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt"
+        ckpt_dir = "/content/drive/MyDrive/graph_checkpoints"
+    except ImportError:
+        data_path = LOCAL_DATA_PATH
+        ckpt_dir = LOCAL_CKPT_DIR
+
+    os.makedirs(ckpt_dir, exist_ok=True)
+    print(f"Dataset path: {data_path}")
+    print(f"Checkpoints path: {ckpt_dir}")
+    return data_path, ckpt_dir
+
+DATASET_PATH, CKPT_DIR = setup_drive_paths()
 print(f"Environment initialized successfully. PyTorch version: {torch.__version__}, Running on: {device}")
 """
     cells.append(nbf.v4.new_code_cell(cell1_code))
 
-    # Cell 2: Procedural Graph & DFS Dataset Generation with Candidate Selection
-    cell2_md = """### Dataset Construction: Candidate Sampling for Complex DFS Traversal Traces
-To ensure rich reasoning challenges with explicit dead-ends and multi-branch exploration:
-1. **Goal-Terminated Traversal**: The DFS traversal stops **immediately** upon discovering the goal node $g$, so $g$ appears **exactly once** at the final position of the input sequence (`trace[-1] == g`).
-2. **Synthetic Candidate Selection**: We generate $M=20,000$ candidate graph-traversal instances and select $N=4,000$ samples that strictly meet the target length bounds:
-   - DFS Trace Length $K$: $15 \\le K \\le 25$
-   - Shortest Path Length $M$: $4 \\le M \\le 10$
-3. **Randomized Token Order**: Node identifiers are randomly permuted across the vocabulary range $\\{0, 1, \\dots, 19\\}$ for every sample to enforce true algorithmic generalization.
+    # Cell 2: Import Standardized Graph Dataset
+    cell2_md = """### Dataset Construction: Standardized Candidate-Filtered Goal-Terminated DFS Traces
+Rather than procedurally sampling traces on the fly, we load the standardized candidate-filtered goal-terminated DFS trace dataset generated in `0.graph_dataset_and_topology_analysis_tutorial.ipynb`.
 
 Special Vocabulary Tokens:
 - Tokens `0` - `19`: Graph Node Identifiers ($V=20$)
@@ -100,117 +125,24 @@ Special Vocabulary Tokens:
 """
     cells.append(nbf.v4.new_markdown_cell(cell2_md))
 
-    cell2_code = """# Cell 2: Procedural Dataset Generation with Candidate Selection & Randomized Token Order
+    cell2_code = """# Cell 2: Import Standardized Dataset from Drive / Local Directory
 
-VOCAB_SIZE = 22
-PAD_TOKEN = 20
-STOP_TOKEN = 21
-MAX_SRC_LEN = 25
-MAX_TGT_LEN = 10
+if not os.path.exists(DATASET_PATH):
+    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run Notebook 0 (0.graph_dataset_and_topology_analysis_tutorial.ipynb) to generate and save the dataset payload.")
 
-def generate_single_candidate(min_nodes=10, max_nodes=20, max_trace_len=25, min_trace_len=15, min_sp_len=4, max_sp_len=10):
-    for attempt in range(500):
-        n = random.randint(min_nodes, max_nodes)
-        G = nx.Graph()
-        G.add_nodes_from(range(n))
+dataset_payload = torch.load(DATASET_PATH, weights_only=False)
+train_raw = dataset_payload['train']
+val_raw = dataset_payload['val']
+test_raw = dataset_payload['test']
 
-        # Build a graph with branches and dead-ends (average degree 2.0-2.5)
-        num_edges = random.randint(n, int(n * 1.4))
-        while G.number_of_edges() < num_edges:
-            u, v = random.sample(range(n), 2)
-            if u != v:
-                G.add_edge(u, v)
-
-        if not nx.is_connected(G):
-            continue
-
-        start = random.choice(range(n))
-        goal = random.choice([v for v in range(n) if v != start])
-
-        # Run DFS from start that STOPS IMMEDIATELY upon reaching goal
-        trace = []
-        visited = set()
-        goal_reached = False
-
-        def dfs(u, parent=None):
-            nonlocal goal_reached
-            if goal_reached:
-                return
-            trace.append(u)
-            visited.add(u)
-
-            if u == goal:
-                goal_reached = True
-                return
-
-            neighbors = list(G.neighbors(u))
-            random.shuffle(neighbors)
-            for v in neighbors:
-                if goal_reached:
-                    return
-                if v not in visited:
-                    dfs(v, u)
-                    if not goal_reached:
-                        # Return/backtrack step from dead-end or branch
-                        trace.append(u)
-
-        dfs(start)
-
-        if not goal_reached:
-            continue
-
-        # Verify strict termination condition: goal appears ONLY ONCE at the end
-        if trace[-1] != goal or trace.count(goal) != 1:
-            continue
-
-        if not (min_trace_len <= len(trace) <= max_trace_len):
-            continue
-
-        # Build graph constructed from trace edges
-        G_trace = nx.Graph()
-        for i in range(len(trace) - 1):
-            G_trace.add_edge(trace[i], trace[i+1])
-
-        if not nx.has_path(G_trace, start, goal):
-            continue
-
-        sp = nx.shortest_path(G_trace, source=start, target=goal)
-
-        if min_sp_len <= len(sp) <= max_sp_len:
-            # Token permutation over vocabulary of 20 tokens
-            vocab = list(range(20))
-            perm = random.sample(vocab, n)
-            mapping = {i: perm[i] for i in range(n)}
-
-            perm_trace = [mapping[x] for x in trace]
-            perm_sp = [mapping[x] for x in sp]
-            G_perm = nx.relabel_nodes(G_trace, mapping)
-            return perm_trace, perm_sp, G_perm, mapping
-
-    return None
-
-def generate_filtered_dataset(target_samples=4000):
-    dataset = []
-    attempts = 0
-    max_attempts = target_samples * 20
-    while len(dataset) < target_samples and attempts < max_attempts:
-        sample = generate_single_candidate()
-        attempts += 1
-        if sample is not None:
-            dataset.append(sample)
-    return dataset
-
-print("Generating 4,000 candidate-filtered graph DFS samples...")
-start_time = time.time()
-raw_data = generate_filtered_dataset(4000)
-print(f"Generated {len(raw_data)} samples in {time.time() - start_time:.2f} seconds.")
-
-# Split into Train (3000), Val (500), Test (500)
-train_raw = raw_data[:3000]
-val_raw = raw_data[3000:3500]
-test_raw = raw_data[3500:4000]
+VOCAB_SIZE = dataset_payload.get('vocab_size', 22)
+PAD_TOKEN = dataset_payload.get('pad_token', 20)
+STOP_TOKEN = dataset_payload.get('stop_token', 21)
+MAX_SRC_LEN = dataset_payload.get('max_src_len', 25)
+MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 10)
 
 sample_trace, sample_sp, sample_G, sample_map = train_raw[0]
+print(f"Dataset successfully loaded from '{DATASET_PATH}': Train={len(train_raw)}, Val={len(val_raw)}, Test={len(test_raw)}")
 print("\\n--- Sample Graph DFS Traversal Instance ---")
 print(f"Input DFS Trace (len {len(sample_trace)}): {sample_trace}")
 print(f"Goal Node: {sample_trace[-1]} (Count in Trace: {sample_trace.count(sample_trace[-1])})")
@@ -218,7 +150,7 @@ print(f"Target Shortest Path (len {len(sample_sp)}): {sample_sp}")
 """
     cells.append(nbf.v4.new_code_cell(cell2_code))
 
-    # Cell 3: PyTorch Dataset & DataLoader
+    # Cell 3: Dataset & DataLoader Definition
     cell3_md = """### PyTorch Dataset and DataLoader Wrappers
 We convert raw sequences into padded PyTorch Tensors.
 - Input sequence (`src`) is right-padded with `PAD_TOKEN=20` up to length `25`.
@@ -234,7 +166,7 @@ class GraphDFSDataset(Dataset):
         for trace, sp, G, mapping in raw_data:
             # Pad SRC
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
-            src_mask = [0 if t != PAD_TOKEN else 1 for t in src] # 1 for padding
+            src_mask = [False if t != PAD_TOKEN else True for t in src]
 
             # Pad TGT (Append STOP token, then PAD)
             tgt = list(sp) + [STOP_TOKEN]
@@ -244,8 +176,9 @@ class GraphDFSDataset(Dataset):
                 torch.tensor(src[:max_src_len], dtype=torch.long),
                 torch.tensor(src_mask[:max_src_len], dtype=torch.bool),
                 torch.tensor(tgt[:max_tgt_len], dtype=torch.long),
-                len(trace),
-                len(sp)
+                trace,
+                sp,
+                G
             ))
 
     def __len__(self):
@@ -254,15 +187,24 @@ class GraphDFSDataset(Dataset):
     def __getitem__(self, idx):
         return self.samples[idx]
 
+def graph_collate_fn(batch):
+    src = torch.stack([item[0] for item in batch])
+    src_mask = torch.stack([item[1] for item in batch])
+    tgt = torch.stack([item[2] for item in batch])
+    traces = [item[3] for item in batch]
+    sps = [item[4] for item in batch]
+    graphs = [item[5] for item in batch]
+    return src, src_mask, tgt, traces, sps, graphs
+
 train_dataset = GraphDFSDataset(train_raw)
 val_dataset = GraphDFSDataset(val_raw)
 test_dataset = GraphDFSDataset(test_raw)
 
-train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=graph_collate_fn)
+val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=graph_collate_fn)
+test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=graph_collate_fn)
 
-print(f"Datasets created: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+print(f"DataLoaders created: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
 """
     cells.append(nbf.v4.new_code_cell(cell3_code))
 
@@ -361,7 +303,7 @@ print(f"OneShotGraphTransformer initialized. Total Trainable Parameters: {total_
 """
     cells.append(nbf.v4.new_code_cell(cell4_code))
 
-    # Cell 5: Training & Evaluation Functions
+    # Cell 5: Helper functions
     cell5_md = """### Training Loop and Validation Metrics
 We define rigorous evaluation metrics:
 1. **Per-Token Accuracy**: Proportion of predicted tokens matching target up to STOP_TOKEN.
@@ -386,7 +328,7 @@ def evaluate(model, dataloader, device):
     valid_paths = 0
 
     with torch.no_grad():
-        for src, src_mask, tgt, src_lens, tgt_lens in dataloader:
+        for src, src_mask, tgt, traces, sps, graphs in dataloader:
             src, src_mask, tgt = src.to(device), src_mask.to(device), tgt.to(device)
             logits, _ = model(src, src_key_padding_mask=src_mask)
 
@@ -458,7 +400,7 @@ print("Evaluation helper functions loaded successfully.")
 """
     cells.append(nbf.v4.new_code_cell(cell5_code))
 
-    # Cell 6: Interactive Training Loop
+    # Cell 6: Model Training Loop
     cell6_md = """### Interactive Model Training
 We train `OneShotGraphTransformer` over 20 epochs, tracking loss, token accuracy, exact match accuracy, and path connectivity validity.
 """
@@ -482,7 +424,7 @@ for epoch in range(1, num_epochs + 1):
     model.train()
     running_loss = 0.0
 
-    for src, src_mask, tgt, _, _ in train_loader:
+    for src, src_mask, tgt, _, _, _ in train_loader:
         src, src_mask, tgt = src.to(device), src_mask.to(device), tgt.to(device)
         optimizer.zero_grad()
 
@@ -515,7 +457,7 @@ print(f"\\nTraining complete in {total_train_time:.2f} seconds ({total_train_tim
 """
     cells.append(nbf.v4.new_code_cell(cell6_code))
 
-    # Cell 7: Test Set Benchmark & Random Baseline
+    # Cell 7: Test Benchmark
     cell7_md = """### Test Evaluation and Random Heuristic Baseline Comparison
 To evaluate the true generalizability of the trained One-Shot Transformer, we benchmark its performance on the unseen test dataset against a **Random Walk Baseline** (choosing valid random neighboring steps from start to target).
 """
@@ -599,8 +541,8 @@ ax1.legend(lines, labels, loc='center right', frameon=True, facecolor='white', f
 
 plt.title('One-Shot Graph Transformer: Training & Validation Progress', fontsize=14, fontweight='bold', pad=15)
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_training_curves.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_training_curves.png', dpi=300, bbox_inches='tight')
+for cp in CHART_PATHS:
+    plt.savefig(os.path.join(cp, 'graph_dfs_training_curves.png'), dpi=300, bbox_inches='tight')
 plt.show()
 
 # Chart 2: Test Metrics Comparison Bar Chart
@@ -631,14 +573,14 @@ for rect in rects1 + rects2:
                 ha='center', va='bottom', fontsize=10, fontweight='bold')
 
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_metrics_summary.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_metrics_summary.png', dpi=300, bbox_inches='tight')
+for cp in CHART_PATHS:
+    plt.savefig(os.path.join(cp, 'graph_dfs_metrics_summary.png'), dpi=300, bbox_inches='tight')
 plt.show()
 
 # Chart 3: Cross-Attention Weight Routing Heatmap
 model.eval()
 with torch.no_grad():
-    sample_src, sample_mask, sample_tgt, _, _ = test_dataset[0]
+    sample_src, sample_mask, sample_tgt, _, _, _ = test_dataset[0]
     sample_src_b = sample_src.unsqueeze(0).to(device)
     sample_mask_b = sample_mask.unsqueeze(0).to(device)
 
@@ -654,8 +596,8 @@ plt.title('Target Position Query Cross-Attention Routing over Input DFS Trace', 
 plt.xlabel('Input DFS Traversal Trace Tokens', fontsize=11, fontweight='bold')
 plt.ylabel('Parallel Output Query Positions', fontsize=11, fontweight='bold')
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_attention_routing.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_attention_routing.png', dpi=300, bbox_inches='tight')
+for cp in CHART_PATHS:
+    plt.savefig(os.path.join(cp, 'graph_dfs_attention_routing.png'), dpi=300, bbox_inches='tight')
 plt.show()
 
 # Chart 4: NetworkX Graph Visualization with Sample Shortest Path Prediction
@@ -694,8 +636,8 @@ plt.title(f"Sample Graph Shortest Path Extraction\\nTrue Path: {sample_sp_raw} |
 plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
 plt.axis('off')
 plt.tight_layout()
-plt.savefig('charts/graph_dfs_sample_visualization.png', dpi=300, bbox_inches='tight')
-plt.savefig('graphs/charts/graph_dfs_sample_visualization.png', dpi=300, bbox_inches='tight')
+for cp in CHART_PATHS:
+    plt.savefig(os.path.join(cp, 'graph_dfs_sample_visualization.png'), dpi=300, bbox_inches='tight')
 plt.show()
 
 print("All publication-quality figures successfully generated and saved to 'charts/'.")
