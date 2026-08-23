@@ -480,6 +480,25 @@ We created a seq2seq autoregressive model notebook `graphs/1.step_by_step_graph_
 
 ---
 
+## Task 15: Mechanistic Interpretability and Causal Activation Patching Analysis
+We created a dedicated mechanistic analysis notebook `graphs/2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb` dissecting the training phase transition between Epoch 300 and Epoch 400 in the Autoregressive Graph Shortest Path Transformer.
+
+### Dissecting the Phase Transition (20% to 80% Performance Surge)
+- **Rollout Exact Match Accuracy**: Surges from **13.4%** at Epoch 300 to **80.0%** at Epoch 400 across the 500-sample validation set.
+- **Cross-Attention Sharpening**: Layer 1 cross-attention entropy drops from **0.87 nats** to **0.40 nats**, demonstrating learned spatial precision in locating target step nodes within encoded 1D DFS execution traces.
+- **Logit Margin Amplification**: Step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision confidence boundaries.
+- **Causal Activation Patching**: Causal memory patching proves that the phase transition requires holistic alignment between Encoder representations and Decoder Cross-Attention routing mechanisms.
+
+### Reusable Exported Inference Datasets
+Full evaluation payloads for both checkpoints are exported to `graphs/data/inference_dataset_epoch_300.pt` and `graphs/data/inference_dataset_epoch_400.pt`, containing input DFS traces, target paths, predicted paths, graph topology metrics, memory tensors, logit margins, and cross-attention entropy maps.
+
+### Charts & Visual Assets
+- `charts/ckpt_comparison_mechanistic_metrics.png`: Layer-wise weight deltas, cross-attention entropy sharpening, and logit margin amplification.
+- `charts/good_vs_bad_topology_activations.png`: Topological distributions ($M$, $B$) and activation profiles comparing good vs. bad predictions.
+- `charts/causal_transition_and_patching.png`: Transition matrix breakdown (68% improved samples), first error step index histogram, and causal patching results.
+
+---
+
 ## Task 10: Bidirectional Linear Attention Labyrinth Solver: Gated DeltaNet vs. KIMI LINEAR
 
 We designed and implemented a thorough from-scratch tutorial on **Linear Attention** models in `labs/7.linear_attention_labyrinth_solver_tutorial.ipynb`. This notebook provides deep conceptual derivations, full mathematical formulations, from-scratch PyTorch modules, training loops, multi-step rollout benchmarks, and visual gate interpretability analysis.

@@ -80,9 +80,39 @@ config = {
 - `0.graph_dataset_and_topology_analysis_tutorial.ipynb`: Dataset generation notebook and topological characterization.
 - `0.one_shot_graph_shortest_path_tutorial.ipynb`: One-Shot Non-Autoregressive Transformer tutorial.
 - `1.step_by_step_graph_shortest_path_tutorial.ipynb`: Step-by-Step Autoregressive Graph Shortest Path Transformer tutorial.
+- `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 (13.4% exact match) to Epoch 400 (80.0% exact match).
 - `generate_data_notebook.py`: Programmatic generator for Notebook 0.
 - `generate_notebook.py`: Programmatic generator for One-Shot Notebook.
 - `generate_ar_notebook.py`: Programmatic generator for Autoregressive Notebook.
+- `generate_mechanistic_notebook.py`: Programmatic generator for Mechanistic Analysis Notebook 2.
 - `data/graph_dfs_dataset.pt`: Pre-generated dataset payload.
+- `data/inference_dataset_epoch_300.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 300.
+- `data/inference_dataset_epoch_400.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 400.
 - `checkpoints/`: Local directory for model checkpoints.
 - `charts/`: Output visualization figures.
+
+---
+
+## 5. Mechanistic Interpretability & Exported Inference Datasets
+
+Notebook `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb` analyzes the training phase transition between Epoch 300 and Epoch 400.
+
+### Key Mechanistic Findings
+- **Phase Transition Surge**: Autoregressive rollout exact match accuracy increases from **13.4%** at Epoch 300 to **80.0%** at Epoch 400 on the 500-sample validation set.
+- **Cross-Attention Sharpening**: Layer 1 cross-attention entropy drops sharply from **0.87 nats** to **0.40 nats**, reflecting learned precision in locating target step nodes within 1D DFS traces.
+- **Logit Margin Amplification**: Mean step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision margins.
+- **Transition Breakdown**: Out of 500 validation samples, **340 samples (68.0%)** improve from incorrect to correct exact matches, **60 samples (12.0%)** remain correct, **93 samples (18.6%)** remain failed, and **7 samples (1.4%)** regress.
+
+### Serialized Inference Datasets Schema
+Annotated evaluation datasets are exported to `data/inference_dataset_epoch_300.pt` and `data/inference_dataset_epoch_400.pt`. Each payload contains:
+- `metadata`: `{ 'epoch': int, 'num_samples': int (500), 'rollout_exact_match_acc': float, 'vocab_size': int (42) }`
+- `samples`: List of 500 sample dictionaries:
+  - `sample_id`: Sample index ($0 \le i < 500$)
+  - `input_trace`: `torch.Tensor` (long, `[K]`)
+  - `target_path`: `torch.Tensor` (long, `[M]`)
+  - `predicted_path`: `torch.Tensor` (long, `[M_pred]`)
+  - `exact_match`: `bool`
+  - `valid_path_connectivity`: `bool`
+  - `error_step_index`: `int` (First error token position, -1 if exact match)
+  - `topology`: `{ 'trace_len': int, 'sp_len': int, 'backtracks': int, 'num_nodes': int, 'num_edges': int, 'density': float }`
+  - `activations`: `{ 'memory_tensor': Tensor [K, 16], 'logit_margins': Tensor [M], 'cross_attn_entropies': Tensor [M], 'avg_memory_norm': float, 'avg_logit_margin': float, 'avg_cross_attn_entropy': float }`
