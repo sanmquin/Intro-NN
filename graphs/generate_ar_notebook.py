@@ -15,8 +15,8 @@ Extracting structural path information from complex, noisy algorithmic execution
 In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated traversal traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The notebook supports dynamic dataset switching between **Dense Random Walk (`rw_dense`)**, **Random Walk (`rw`)**, and **Depth-First Search (`dfs`)** traversal traces, alongside multi-size network configurations (`small`, `base`, `large`) and dataset-prefixed checkpoint serialization.
 
 In the **Dense Random Walk (`rw_dense`)** flavor:
-- **4+ Minimum Node Connectivity**: Every node has a degree $k \\ge 4$ ($d_{\\text{avg}} \\ge 4.5$), presenting at least 4-way bifurcations at every step.
-- **Loops & Cyclical Paths**: The underlying graph contains dense intersecting cycles, testing the model's ability to filter out non-optimal loops and extract direct shortest paths.
+- **4+ Minimum Node Connectivity**: Every node has a degree $k \\ge 4$ ($d_{\\text{avg}} \\ge 5.0$), presenting at least 4-way bifurcations at every step.
+- **Loops & Multi-Way Decision Junctions**: Graphs are constructed as 2D/3D multi-layered dense lattices with high clustering coefficients ($\text{CC} \approx 0.45+$) and high decoy edge ratios ($> 60\%$).
 
 ---
 
@@ -128,7 +128,7 @@ dataset_filename = f"graph_{config['dataset_flavor']}_dataset.pt"
 DATASET_PATH = os.path.join(DATA_DIR, dataset_filename)
 
 if not os.path.exists(DATASET_PATH):
-    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset generator to create '{dataset_filename}'.")
+    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset generator script to create '{dataset_filename}'.")
 
 print(f"Loading dataset payload from '{DATASET_PATH}' (Flavor: {config['dataset_flavor'].upper()})...")
 dataset_payload = torch.load(DATASET_PATH, weights_only=False)
@@ -150,6 +150,7 @@ class GraphARDataset(Dataset):
             trace, sp, G, mapping = item[0], item[1], item[2], item[3]
             backtracks = item[4] if len(item) > 4 else 0
             node_backtraces = item[5] if len(item) > 5 else {}
+            metrics = item[6] if len(item) > 6 else {}
 
             src = list(trace) + [PAD_TOKEN] * (max_src_len - len(trace))
             src_mask = [False if t != PAD_TOKEN else True for t in src]
@@ -167,7 +168,8 @@ class GraphARDataset(Dataset):
                 sp,
                 G,
                 backtracks,
-                node_backtraces
+                node_backtraces,
+                metrics
             ))
 
     def __len__(self):
@@ -186,7 +188,8 @@ def graph_ar_collate_fn(batch):
     graphs = [item[6] for item in batch]
     backtracks = [item[7] for item in batch]
     node_backtraces = [item[8] for item in batch]
-    return src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces
+    metrics = [item[9] for item in batch]
+    return src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces, metrics
 
 train_dataset = GraphARDataset(train_raw)
 val_dataset = GraphARDataset(val_raw)
@@ -363,7 +366,7 @@ def evaluate_model(model, dataloader, device, run_rollout=True):
     valid_paths = 0
 
     with torch.no_grad():
-        for src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces in dataloader:
+        for src, src_mask, tgt, tgt_mask, traces, sps, graphs, backtracks, node_backtraces, metrics in dataloader:
             src, src_mask = src.to(device), src_mask.to(device)
             tgt, tgt_mask = tgt.to(device), tgt_mask.to(device)
 
@@ -481,7 +484,7 @@ for epoch in range(start_epoch, end_epoch + 1):
     model.train()
     running_loss = 0.0
 
-    for src, src_mask, tgt, tgt_mask, _, _, _, _, _ in train_loader:
+    for src, src_mask, tgt, tgt_mask, _, _, _, _, _, _ in train_loader:
         src, src_mask = src.to(device), src_mask.to(device)
         tgt, tgt_mask = tgt.to(device), tgt_mask.to(device)
 
@@ -578,7 +581,7 @@ print("=" * 65)
     cell7_md = """### Publication-Quality Visualizations & Sample Analysis
 Generates:
 1. **Training & Validation Loss Curves** (`charts/ar_graph_{dataset_flavor}_training_curves.png`).
-2. **Sample Graph Shortest Path Rollout**: Includes the **original input sequence both in text format and in the visual chart layout**, alongside true vs. predicted path overlays and node backtrace counts (`charts/ar_graph_{dataset_flavor}_sample_visualization.png`).
+2. **Sample Graph Shortest Path Rollout**: Includes the **original input sequence both in text format and in the visual chart layout**, alongside true vs. predicted path overlays and quality metrics (`charts/ar_graph_{dataset_flavor}_sample_visualization.png`).
 """
     cells.append(nbf.v4.new_markdown_cell(cell7_md))
 
@@ -624,7 +627,7 @@ else:
 plt.show()
 
 # Chart 2: Sample Graph Shortest Path Rollout with Original Sequence Text and Visual Layout
-sample_src, sample_mask, sample_tgt, _, sample_trace, sample_sp, G_sample, backtracks_sample, node_backtraces_sample = test_dataset[0]
+sample_src, sample_mask, sample_tgt, _, sample_trace, sample_sp, G_sample, backtracks_sample, node_backtraces_sample, metrics_sample = test_dataset[0]
 
 model.eval()
 with torch.no_grad():
@@ -632,7 +635,7 @@ with torch.no_grad():
     sample_mask_b = sample_mask.unsqueeze(0).to(device)
     pred_rollout = model.solve_graph_autoregressive(sample_src_b, src_key_padding_mask=sample_mask_b)[0]
 
-plt.figure(figsize=(10, 7))
+plt.figure(figsize=(10, 7.5))
 pos = nx.kamada_kawai_layout(G_sample)
 
 # Draw base graph
@@ -650,14 +653,18 @@ nx.draw_networkx_nodes(G_sample, pos, nodelist=[sample_sp[-1]], node_color='crim
 labels = {node: str(node) for node in G_sample.nodes()}
 nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='bold')
 
-# Formatted original sequence text block
+# Formatted original sequence text block & metrics
 trace_str = f"Original Input {config['dataset_flavor'].upper()} Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
 sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
 pred_str = f"Autoregressive Predicted Path: {pred_rollout}"
-deg_str = f"Nodes N={G_sample.number_of_nodes()} | Edges |E|={G_sample.number_of_edges()} | Min Deg={min(d for _, d in G_sample.degree())} | Avg Deg={sum(d for _, d in G_sample.degree())/G_sample.number_of_nodes():.2f}"
 
-plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{deg_str}",
-               fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
+if metrics_sample:
+    q_str = f"Quality Score Q: {metrics_sample.get('score', 0):.2f} | Decoy Edge Ratio: {metrics_sample.get('decoy_ratio', 0)*100:.1f}% | Alt SPs: {metrics_sample.get('num_alt_sps', 1)} | Sub-loop Revisits: {metrics_sample.get('revisited_nodes', 0)}\\nNodes N={G_sample.number_of_nodes()} | Edges |E|={G_sample.number_of_edges()} | Min Deg={metrics_sample.get('min_deg', 4)} | Avg Deg={metrics_sample.get('avg_deg', 5):.2f} | Clustering Coeff={metrics_sample.get('clustering_coeff', 0):.3f}"
+else:
+    q_str = f"Nodes N={G_sample.number_of_nodes()} | Edges |E|={G_sample.number_of_edges()} | Min Deg={min(d for _, d in G_sample.degree())} | Avg Deg={sum(d for _, d in G_sample.degree())/G_sample.number_of_nodes():.2f}"
+
+plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{q_str}",
+               fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.92, edgecolor='gray'))
 
 plt.title(f"Autoregressive Shortest Path Prediction Layout ({config['dataset_flavor'].upper()})", fontsize=13, fontweight='bold', pad=15)
 plt.legend(scatterpoints=1, loc='upper left', frameon=True, facecolor='white')
@@ -681,7 +688,7 @@ print("Publication-quality figures generated and saved.")
     # Cell 8: Plan Mechanics Analysis & Summary
     cell8_md = """### Self-Reflection & Mechanics of Good vs. Bad Plans
 
-1. **Impact of Hardened Dense Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$, $d_{\\text{min}} \\ge 4$)**:
+1. **Impact of Hardened Dense Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$, $d_{\\text{min}} \\ge 4$, Decoy Ratio $> 60\\%$)**:
    In dense random walk traces, every state transition faces at least 4 candidate outgoing edges (4-way bifurcations) and abundant cyclical loops. The Transformer must learn to filter non-optimal loops and identify the true shortest path.
 2. **Mechanics of a Good Plan vs. a Bad Plan**:
    - **Good Plan**: The autoregressive decoder successfully attends to valid cross-attention memory transitions, predicting step $p_m$ aligned with the graph adjacency matrix $A$.

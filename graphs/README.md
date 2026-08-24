@@ -11,9 +11,15 @@ The procedural graph datasets (`graphs/data/graph_dfs_dataset.pt`, `graphs/data/
 ### Dataset Flavors
 1. **Depth-First Search (`dfs`)**: Systematic tree-structured exploration traces containing forward branch expansion and backtracking steps.
 2. **Sparse Random Walk (`rw`)**: Stochastic, unguided random walks over sparse tree-like graphs (< 2.5 average degree per node).
-3. **Dense Random Walk (`rw_dense`)**: Stochastic random walks over **highly connected topologies**:
-   - **4+ Node Connectivity Guarantee**: Every node strictly maintains a degree $k \ge 4$ (with average node degree $d_{\text{avg}} \ge 4.5$).
-   - **Loops & Multi-Way Bifurcations**: Graph structure contains rich intersecting cycles and at least 4-way decision junctions at every state transition.
+3. **Dense Random Walk (`rw_dense`)**: Stochastic random walks over **multi-dimensional dense mesh topologies** using **Best-of-N Candidate Quality Optimization**:
+   - **4+ Node Connectivity Guarantee**: Every node strictly maintains a degree $k \ge 4$ (with average node degree $d_{\text{avg}} \ge 5.0$).
+   - **Multi-Layered & Cross-Diagonal Meshes**: Constructed as 2D/3D multi-layer lattices and diagonal grid meshes ($N=30$) with high clustering coefficients ($\text{CC} \approx 0.45+$).
+   - **Best-of-N Quality Scoring ($Q$)**: For each sample slot, candidate random walks are simulated, scored, and the highest-complexity sample is selected based on:
+     - **Alternate Shortest Paths ($num\_alt\_sps$)**: Count of distinct equal-length shortest paths in $G_{\text{tr}}$.
+     - **Sub-Loop Revisits ($revisited\_nodes$)**: Count of unique nodes visited $> 1$ time across non-trivial sub-loops.
+     - **Decoy Edge Ratio ($decoy\_ratio$)**: Ratio of observed trace edges that act as distractor edges off the target shortest path $P^*$.
+
+$$Q(T) = 2.5 \cdot N_{\text{alt\_sp}} + 1.5 \cdot N_{\text{revisit}} + 12.0 \cdot \eta_{\text{decoy}} + 5.0 \cdot \text{CC}(G) + 1.0 \cdot \langle k \rangle$$
 
 ### Traversal Parameters & Sequence Bounds
 - **Input Traversal Trace ($T$)**: Goal-terminated 1D execution trace containing forward exploration, loops, and return/backtracking steps.
@@ -73,7 +79,7 @@ config = {
 
 ### Key Configuration Flags
 - **`dataset_flavor`**:
-  - `"rw_dense"`: Dense Random Walk dataset ($d_{\text{min}} \ge 4$, loops, multi-way decision junctions).
+  - `"rw_dense"`: Dense Random Walk dataset ($d_{\text{min}} \ge 4$, $d_{\text{avg}} \ge 5.0$, Best-of-N quality score $Q$, decoy edge ratio $> 60\%$).
   - `"rw"`: Sparse Random Walk dataset.
   - `"dfs"`: Depth-First Search tree exploration dataset.
 - **`restart_training`**:
@@ -91,20 +97,20 @@ config = {
 ## 4. Directory Structure & Files
 
 - `0.graph_dataset_and_topology_analysis_tutorial.ipynb`: DFS dataset generation notebook and topological characterization.
-- `0.random_walk_graph_dataset_tutorial.ipynb`: Random walk dataset generation notebook.
-- `0.dense_random_walk_graph_dataset_tutorial.ipynb`: Dense Random Walk dataset generation notebook ($d_{\text{min}} \ge 4$).
+- `0.random_walk_graph_dataset_tutorial.ipynb`: Sparse Random Walk dataset generation notebook.
+- `0.dense_random_walk_graph_dataset_tutorial.ipynb`: Dense Random Walk dataset generation notebook ($d_{\text{min}} \ge 4$, Best-of-N Quality Scoring).
 - `0.one_shot_graph_shortest_path_tutorial.ipynb`: One-Shot Non-Autoregressive Transformer tutorial.
 - `1.step_by_step_graph_shortest_path_tutorial.ipynb`: Step-by-Step Autoregressive Graph Shortest Path Transformer tutorial.
 - `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 to Epoch 400.
 - `generate_data_notebook.py`: Programmatic generator for DFS dataset notebook.
-- `generate_rw_data_notebook.py`: Programmatic generator for Random Walk dataset notebook.
+- `generate_rw_data_notebook.py`: Programmatic generator for Sparse Random Walk dataset notebook.
 - `generate_rw_dense_data_notebook.py`: Programmatic generator for Dense Random Walk dataset notebook.
 - `generate_notebook.py`: Programmatic generator for One-Shot Notebook.
 - `generate_ar_notebook.py`: Programmatic generator for Autoregressive Notebook.
 - `generate_mechanistic_notebook.py`: Programmatic generator for Mechanistic Analysis Notebook 2.
 - `data/graph_dfs_dataset.pt`: Pre-generated DFS dataset payload.
 - `data/graph_rw_dataset.pt`: Pre-generated RW dataset payload.
-- `data/graph_rw_dense_dataset.pt`: Pre-generated Dense RW dataset payload ($d_{\text{min}} \ge 4$).
+- `data/graph_rw_dense_dataset.pt`: Pre-generated Dense RW dataset payload ($d_{\text{min}} \ge 4$, Best-of-N $Q$).
 - `data/inference_dataset_epoch_300.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 300.
 - `data/inference_dataset_epoch_400.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 400.
 - `checkpoints/`: Local directory for model checkpoints.
