@@ -44,7 +44,7 @@ $$\text{Patching Effect} = P_{300\_model}\left(Y^* \mid \text{Memory}=H_{src}^{(
     cells.append(nbf.v4.new_markdown_cell(title_md))
 
     # Cell 1: Environment & Drive Configuration
-    cell1_code = """# Cell 1: Environment Setup, Random Seeds, and Drive/Local Path Resolution
+    cell1_code = """# Cell 1: Environment Setup, Random Seeds, and Drive/Local Path Resolution Hierarchy
 
 import os
 import random
@@ -59,23 +59,54 @@ import seaborn as sns
 import networkx as nx
 from scipy import stats
 
-# Resolve paths relative to repository structure
+# Resolve local fallback paths relative to repository structure
 if os.path.basename(os.getcwd()) == "graphs":
     os.makedirs("../charts", exist_ok=True)
     os.makedirs("charts", exist_ok=True)
     os.makedirs("data", exist_ok=True)
-    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
-    LOCAL_CKPT_300 = "data/ar_graph_transformer_epoch_300.pt"
-    LOCAL_CKPT_400 = "data/ar_graph_transformer_epoch_400.pt"
-    EXPORT_DIR = "data"
+    FALLBACK_DATA_PATH = "data/graph_dfs_dataset.pt"
+    FALLBACK_CKPT_300 = "data/ar_graph_transformer_epoch_300.pt"
+    FALLBACK_CKPT_400 = "data/ar_graph_transformer_epoch_400.pt"
+    FALLBACK_EXPORT_DIR = "data"
 else:
     os.makedirs("charts", exist_ok=True)
     os.makedirs("graphs/charts", exist_ok=True)
     os.makedirs("graphs/data", exist_ok=True)
-    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
-    LOCAL_CKPT_300 = "graphs/data/ar_graph_transformer_epoch_300.pt"
-    LOCAL_CKPT_400 = "graphs/data/ar_graph_transformer_epoch_400.pt"
-    EXPORT_DIR = "graphs/data"
+    FALLBACK_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
+    FALLBACK_CKPT_300 = "graphs/data/ar_graph_transformer_epoch_300.pt"
+    FALLBACK_CKPT_400 = "graphs/data/ar_graph_transformer_epoch_400.pt"
+    FALLBACK_EXPORT_DIR = "graphs/data"
+
+# Google Drive Paths Primary Resolution
+DRIVE_DATA_PATH = "/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt"
+DRIVE_CKPT_300 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_300.pt"
+DRIVE_CKPT_400 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_400.pt"
+DRIVE_EXPORT_DIR = "/content/drive/MyDrive/graph_data"
+
+if os.path.exists(DRIVE_DATA_PATH):
+    LOCAL_DATA_PATH = DRIVE_DATA_PATH
+    print(f"Primary Resolution: Loading dataset from Google Drive: {LOCAL_DATA_PATH}")
+elif os.path.exists(FALLBACK_DATA_PATH):
+    LOCAL_DATA_PATH = FALLBACK_DATA_PATH
+    print(f"Fallback Resolution: Loading dataset from local repository: {LOCAL_DATA_PATH}")
+else:
+    LOCAL_DATA_PATH = "graphs/graphs/data/graph_dfs_dataset.pt"
+    print(f"Fallback Resolution: Loading dataset from nested repo path: {LOCAL_DATA_PATH}")
+
+if os.path.exists(DRIVE_CKPT_300) and os.path.exists(DRIVE_CKPT_400):
+    PATH_CKPT_300 = DRIVE_CKPT_300
+    PATH_CKPT_400 = DRIVE_CKPT_400
+    print("Primary Resolution: Loading checkpoints from Google Drive.")
+else:
+    PATH_CKPT_300 = FALLBACK_CKPT_300
+    PATH_CKPT_400 = FALLBACK_CKPT_400
+    print("Fallback Resolution: Loading checkpoints from local repository data directory.")
+
+if os.path.exists("/content/drive/MyDrive"):
+    os.makedirs(DRIVE_EXPORT_DIR, exist_ok=True)
+    EXPORT_DIR = DRIVE_EXPORT_DIR
+else:
+    EXPORT_DIR = FALLBACK_EXPORT_DIR
 
 torch.set_num_threads(1)
 
@@ -88,19 +119,6 @@ def set_seed(seed=42):
 
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# Google Drive Checkpoint Resolution with Local Fallback
-DRIVE_CKPT_300 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_300.pt"
-DRIVE_CKPT_400 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_400.pt"
-
-if os.path.exists(DRIVE_CKPT_300) and os.path.exists(DRIVE_CKPT_400):
-    PATH_CKPT_300 = DRIVE_CKPT_300
-    PATH_CKPT_400 = DRIVE_CKPT_400
-    print("Resolved checkpoints from Google Drive.")
-else:
-    PATH_CKPT_300 = LOCAL_CKPT_300
-    PATH_CKPT_400 = LOCAL_CKPT_400
-    print("Resolved checkpoints from local repository data directory.")
 
 print(f"Checkpoint 300 path: {PATH_CKPT_300}")
 print(f"Checkpoint 400 path: {PATH_CKPT_400}")
@@ -116,9 +134,9 @@ if not os.path.exists(LOCAL_DATA_PATH):
 dataset_payload = torch.load(LOCAL_DATA_PATH, map_location='cpu', weights_only=False)
 val_raw = dataset_payload['val']
 
-VOCAB_SIZE = dataset_payload.get('vocab_size', 42)
-PAD_TOKEN = dataset_payload.get('pad_token', 40)
-STOP_TOKEN = dataset_payload.get('stop_token', 41)
+VOCAB_SIZE = 42
+PAD_TOKEN = 40
+STOP_TOKEN = 41
 MAX_SRC_LEN = dataset_payload.get('max_src_len', 50)
 MAX_TGT_LEN = dataset_payload.get('max_tgt_len', 21)
 
@@ -238,12 +256,12 @@ class AutoregressiveGraphTransformer(nn.Module):
         return curr_seqs
 
 # Instantiate model300 and model400
-model300 = AutoregressiveGraphTransformer().to(device)
+model300 = AutoregressiveGraphTransformer(vocab_size=VOCAB_SIZE).to(device)
 ckpt300 = torch.load(PATH_CKPT_300, map_location=device, weights_only=False)
 model300.load_state_dict(ckpt300['model_state_dict'])
 model300.eval()
 
-model400 = AutoregressiveGraphTransformer().to(device)
+model400 = AutoregressiveGraphTransformer(vocab_size=VOCAB_SIZE).to(device)
 ckpt400 = torch.load(PATH_CKPT_400, map_location=device, weights_only=False)
 model400.load_state_dict(ckpt400['model_state_dict'])
 model400.eval()
@@ -559,7 +577,7 @@ print("Causal Insight: Performance jump requires HOLISTIC alignment between Enco
     # Cell 7: Task 4 - Export Inference Datasets
     cell7_md = """### Task 4: Export Reusable Inference Datasets
 
-We save complete, self-contained inference dataset payloads for both checkpoints into `graphs/data/`:
+We save complete, self-contained inference dataset payloads for both checkpoints into `graphs/data/` (or Google Drive if mounted):
 - `inference_dataset_epoch_300.pt`
 - `inference_dataset_epoch_400.pt`
 
@@ -593,6 +611,9 @@ We save complete, self-contained inference dataset payloads for both checkpoints
 export_300_path = os.path.join(EXPORT_DIR, "inference_dataset_epoch_300.pt")
 export_400_path = os.path.join(EXPORT_DIR, "inference_dataset_epoch_400.pt")
 
+fallback_300_path = os.path.join(FALLBACK_EXPORT_DIR, "inference_dataset_epoch_300.pt")
+fallback_400_path = os.path.join(FALLBACK_EXPORT_DIR, "inference_dataset_epoch_400.pt")
+
 payload_300 = {
     'metadata': {
         'epoch': 300,
@@ -615,6 +636,10 @@ payload_400 = {
 
 torch.save(payload_300, export_300_path)
 torch.save(payload_400, export_400_path)
+
+if export_300_path != fallback_300_path:
+    torch.save(payload_300, fallback_300_path)
+    torch.save(payload_400, fallback_400_path)
 
 print(f"Exported Epoch 300 Inference Dataset to '{export_300_path}' ({os.path.getsize(export_300_path) / 1024:.1f} KB).")
 print(f"Exported Epoch 400 Inference Dataset to '{export_400_path}' ({os.path.getsize(export_400_path) / 1024:.1f} KB).")

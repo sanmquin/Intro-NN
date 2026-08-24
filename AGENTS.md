@@ -18,6 +18,13 @@ To ensure that notebooks can run seamlessly on external cloud platforms (such as
 * Do not rely on locally saved state dicts (`.pt` or `.pth`) unless the notebook includes a complete fallback block to train the model from scratch if the file is not found.
 * Whenever possible, define training loops with minimal epochs and sample datasets so that the model can be trained interactively in under 2 minutes during normal verification.
 
+### 1.3 Google Drive Path Resolution Hierarchy (Primary Location vs. GitHub Fallback)
+When running notebooks on cloud platforms like Google Colab, files (datasets, model checkpoints, exported evaluation payloads) must **ALWAYS** be resolved from Google Drive as the primary source:
+* **Primary Path Check**: Every path resolution block must check Google Drive locations first (e.g., `/content/drive/MyDrive/graph_checkpoints/`, `/content/drive/MyDrive/graph_data/`).
+* **Secondary Fallback**: If Google Drive is not mounted or the requested file is not found on Drive, the code must seamlessly fall back to local repository directories (e.g., `graphs/data/`, `data/`, or `checkpoints/`).
+* **Export Strategy**: When exporting checkpoints or evaluation payloads, save to Google Drive if available, and duplicate to local repository directories for standalone execution.
+* **Strict Rule**: Never prioritize local repository paths over Google Drive paths in path resolution logic. The local GitHub repository is strictly a fallback.
+
 ---
 
 ## 2. Notebook Structure and Flow

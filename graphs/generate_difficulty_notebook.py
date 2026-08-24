@@ -17,7 +17,7 @@ This notebook introduces a comprehensive framework to **predict and decouple ste
 2. **Graph Topology & Structural Context Features**: Extracting node-level and graph-level topological indicators for every step decision, including branching factor (out-degree), decoy neighbor ratio, node-level induced regressions (backtracks), relative path depth, and graph density.
 3. **Non-Transformer Predictor Benchmark**: Training machine learning classifiers (**Random Forest**, **Gradient Boosting**, **Multi-Layer Perceptron**, and **Logistic Regression**) to predict step difficulty strictly from graph topology features, achieving strong predictive accuracy ($\text{ROC-AUC} > 0.85$).
 4. **Mechanistic Error Decoupling**: Combining the topological difficulty predictor with model activation diagnostics to categorize every prediction error into either **Topologically Difficult Errors** (inherent graph complexity) or **Attention Misrouting Failures** (model attention failure on topologically simple decisions).
-5. **Reusable Exported Dataset**: Serializing the annotated step classification payload to `graphs/data/step_error_classification_dataset.pt`.
+5. **Reusable Exported Dataset**: Serializing the annotated step classification payload to `graphs/data/step_error_classification_dataset.pt` (with primary Google Drive export path).
 
 ---
 
@@ -54,7 +54,7 @@ We decouple errors ($y_m = 1$) into two fundamental categories using threshold $
     cells.append(nbf.v4.new_markdown_cell(title_md))
 
     # Cell 1: Setup & Environment
-    cell1_code = """# Cell 1: Environment Setup, Random Seeds, and Directory Resolution
+    cell1_code = """# Cell 1: Environment Setup, Random Seeds, and Drive/Local Path Resolution Hierarchy
 
 import os
 import random
@@ -82,18 +82,49 @@ if os.path.basename(os.getcwd()) == "graphs":
     os.makedirs("../charts", exist_ok=True)
     os.makedirs("charts", exist_ok=True)
     os.makedirs("data", exist_ok=True)
-    LOCAL_DATA_PATH = "data/graph_dfs_dataset.pt"
-    LOCAL_CKPT_300 = "data/ar_graph_transformer_epoch_300.pt"
-    LOCAL_CKPT_400 = "data/ar_graph_transformer_epoch_400.pt"
-    EXPORT_DIR = "data"
+    FALLBACK_DATA_PATH = "data/graph_dfs_dataset.pt"
+    FALLBACK_CKPT_300 = "data/ar_graph_transformer_epoch_300.pt"
+    FALLBACK_CKPT_400 = "data/ar_graph_transformer_epoch_400.pt"
+    FALLBACK_EXPORT_DIR = "data"
 else:
     os.makedirs("charts", exist_ok=True)
     os.makedirs("graphs/charts", exist_ok=True)
     os.makedirs("graphs/data", exist_ok=True)
-    LOCAL_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
-    LOCAL_CKPT_300 = "graphs/data/ar_graph_transformer_epoch_300.pt"
-    LOCAL_CKPT_400 = "graphs/data/ar_graph_transformer_epoch_400.pt"
-    EXPORT_DIR = "graphs/data"
+    FALLBACK_DATA_PATH = "graphs/data/graph_dfs_dataset.pt"
+    FALLBACK_CKPT_300 = "graphs/data/ar_graph_transformer_epoch_300.pt"
+    FALLBACK_CKPT_400 = "graphs/data/ar_graph_transformer_epoch_400.pt"
+    FALLBACK_EXPORT_DIR = "graphs/data"
+
+# Google Drive Paths Primary Resolution
+DRIVE_DATA_PATH = "/content/drive/MyDrive/graph_data/graph_dfs_dataset.pt"
+DRIVE_CKPT_300 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_300.pt"
+DRIVE_CKPT_400 = "/content/drive/MyDrive/graph_checkpoints/ar_graph_transformer_epoch_400.pt"
+DRIVE_EXPORT_DIR = "/content/drive/MyDrive/graph_data"
+
+if os.path.exists(DRIVE_DATA_PATH):
+    DATA_PATH = DRIVE_DATA_PATH
+    print(f"Primary Resolution: Loading dataset from Google Drive: {DATA_PATH}")
+elif os.path.exists(FALLBACK_DATA_PATH):
+    DATA_PATH = FALLBACK_DATA_PATH
+    print(f"Fallback Resolution: Loading dataset from local repository: {DATA_PATH}")
+else:
+    DATA_PATH = "graphs/graphs/data/graph_dfs_dataset.pt"
+    print(f"Fallback Resolution: Loading dataset from nested repo path: {DATA_PATH}")
+
+if os.path.exists(DRIVE_CKPT_300) and os.path.exists(DRIVE_CKPT_400):
+    PATH_CKPT_300 = DRIVE_CKPT_300
+    PATH_CKPT_400 = DRIVE_CKPT_400
+    print(f"Primary Resolution: Loading checkpoints from Google Drive.")
+else:
+    PATH_CKPT_300 = FALLBACK_CKPT_300
+    PATH_CKPT_400 = FALLBACK_CKPT_400
+    print(f"Fallback Resolution: Loading checkpoints from local repository directory.")
+
+if os.path.exists("/content/drive/MyDrive"):
+    os.makedirs(DRIVE_EXPORT_DIR, exist_ok=True)
+    EXPORT_DIR = DRIVE_EXPORT_DIR
+else:
+    EXPORT_DIR = FALLBACK_EXPORT_DIR
 
 torch.set_num_threads(1)
 
@@ -106,19 +137,17 @@ def set_seed(seed=42):
 
 set_seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Device: {device} | Data Path: {LOCAL_DATA_PATH}")
+print(f"Device: {device} | Data Path: {DATA_PATH}")
 """
     cells.append(nbf.v4.new_code_cell(cell1_code))
 
     # Cell 2: Dataset Loading
     cell2_code = """# Cell 2: Load Graph DFS Dataset Payload
 
-if not os.path.exists(LOCAL_DATA_PATH):
-    fallback_path = "graphs/graphs/data/graph_dfs_dataset.pt"
-    if os.path.exists(fallback_path):
-        LOCAL_DATA_PATH = fallback_path
+if not os.path.exists(DATA_PATH):
+    raise FileNotFoundError(f"Dataset payload not found at '{DATA_PATH}'. Please ensure Google Drive is mounted or dataset is present.")
 
-dataset_payload = torch.load(LOCAL_DATA_PATH, map_location='cpu', weights_only=False)
+dataset_payload = torch.load(DATA_PATH, map_location='cpu', weights_only=False)
 val_raw = dataset_payload['val']
 
 VOCAB_SIZE = 42
@@ -182,12 +211,12 @@ class AutoregressiveGraphTransformer(nn.Module):
         return mask
 
 model300 = AutoregressiveGraphTransformer(vocab_size=VOCAB_SIZE).to(device)
-ckpt300 = torch.load(LOCAL_CKPT_300, map_location=device, weights_only=False)
+ckpt300 = torch.load(PATH_CKPT_300, map_location=device, weights_only=False)
 model300.load_state_dict(ckpt300['model_state_dict'])
 model300.eval()
 
 model400 = AutoregressiveGraphTransformer(vocab_size=VOCAB_SIZE).to(device)
-ckpt400 = torch.load(LOCAL_CKPT_400, map_location=device, weights_only=False)
+ckpt400 = torch.load(PATH_CKPT_400, map_location=device, weights_only=False)
 model400.load_state_dict(ckpt400['model_state_dict'])
 model400.eval()
 
@@ -370,12 +399,18 @@ print(f"Extracted Total Step Instances: {len(df_all_steps)}")
 print(f"Epoch 300 Step Errors: {df_steps_300['is_step_error'].sum()} / {len(df_steps_300)} ({df_steps_300['is_step_error'].mean()*100:.2f}%)")
 print(f"Epoch 400 Step Errors: {df_steps_400['is_step_error'].sum()} / {len(df_steps_400)} ({df_steps_400['is_step_error'].mean()*100:.2f}%)")
 
-# Export complete step dataset payload
+# Export complete step dataset payload (Drive primary + Local fallback duplication)
 export_payload_path = os.path.join(EXPORT_DIR, "step_error_classification_dataset.pt")
-torch.save({
+fallback_payload_path = os.path.join(FALLBACK_EXPORT_DIR, "step_error_classification_dataset.pt")
+
+dataset_dict = {
     'metadata': {'num_samples': len(val_raw), 'total_step_instances': len(df_all_steps)},
     'step_dataframe': df_all_steps
-}, export_payload_path)
+}
+
+torch.save(dataset_dict, export_payload_path)
+if export_payload_path != fallback_payload_path:
+    torch.save(dataset_dict, fallback_payload_path)
 
 print(f"Exported Step Error Classification Dataset to '{export_payload_path}' ({os.path.getsize(export_payload_path)/1024:.1f} KB).")
 """
@@ -516,7 +551,7 @@ print("          STEP ERROR DECOUPLING SUMMARY (EPOCH 300 vs 400)")
 print("=" * 75)
 for ckpt in ['Epoch 300', 'Epoch 400']:
     df_c = df_all_steps[df_all_steps['checkpoint'] == ckpt]
-    print(f"--- {ckpt} (Total Steps={len(df_c)}, Total Errors={df_c['is_step_error'].sum()}) ---")
+    print(f"\\n--- {ckpt} (Total Steps={len(df_c)}, Total Errors={df_c['is_step_error'].sum()}) ---")
     counts = df_c['error_category'].value_counts()
     for cat, cnt in counts.items():
         print(f"  {cat:<35}: {cnt:<6} ({cnt / float(len(df_c))*100:.2f}%)")
