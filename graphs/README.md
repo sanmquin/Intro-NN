@@ -1,15 +1,22 @@
 # Graph Shortest Path Extraction Benchmarks
 
-This directory contains research tutorials, procedural dataset generators, and Transformer architectures for extracting direct shortest paths from algorithmic execution traces (goal-terminated Depth-First Search traces).
+This directory contains research tutorials, procedural dataset generators, and Transformer architectures for extracting direct shortest paths from algorithmic execution traces (Depth-First Search and Random Walk traces).
 
 ---
 
-## 1. Complex Dataset Specification
+## 1. Complex Dataset Specification & Flavors
 
-The procedural dataset (`graphs/data/graph_dfs_dataset.pt`) is designed to evaluate transformer reasoning over deep search trees and multi-branch exploration traces.
+The procedural graph datasets (`graphs/data/graph_dfs_dataset.pt`, `graphs/data/graph_rw_dataset.pt`, and `graphs/data/graph_rw_dense_dataset.pt`) evaluate transformer reasoning across different execution trace structures and topological complexities.
+
+### Dataset Flavors
+1. **Depth-First Search (`dfs`)**: Systematic tree-structured exploration traces containing forward branch expansion and backtracking steps.
+2. **Sparse Random Walk (`rw`)**: Stochastic, unguided random walks over sparse tree-like graphs (< 2.5 average degree per node).
+3. **Dense Random Walk (`rw_dense`)**: Stochastic random walks over **highly connected topologies**:
+   - **4+ Node Connectivity Guarantee**: Every node strictly maintains a degree $k \ge 4$ (with average node degree $d_{\text{avg}} \ge 4.5$).
+   - **Loops & Multi-Way Bifurcations**: Graph structure contains rich intersecting cycles and at least 4-way decision junctions at every state transition.
 
 ### Traversal Parameters & Sequence Bounds
-- **Input Traversal Trace ($T$)**: Goal-terminated 1D Depth-First Search (DFS) trace containing forward exploration and return/backtracking steps.
+- **Input Traversal Trace ($T$)**: Goal-terminated 1D execution trace containing forward exploration, loops, and return/backtracking steps.
   - **Sequence Length ($K$)**: $30 \le K \le 50$ (`MAX_SRC_LEN = 50`)
   - The destination node $g$ appears **exactly once** at the final position ($t_K = g$).
 - **Target Shortest Path ($P^*$)**: Direct shortest path connecting start node $s$ to destination node $g$.
@@ -19,7 +26,7 @@ The procedural dataset (`graphs/data/graph_dfs_dataset.pt`) is designed to evalu
   - Special Control Tokens: `PAD_TOKEN = 40`, `STOP_TOKEN = 41` (`VOCAB_SIZE = 42`).
 
 ### Node Backtraces & Induced Regressions Metric
-During DFS traversal, whenever $t_k = t_{k-2}$, the transition represents a return step from dead-end or sub-branch node $t_{k-1}$ back to parent node $t_k$. We track two key metrics:
+During traversal, whenever $t_k = t_{k-2}$, the transition represents a return step from dead-end or sub-branch node $t_{k-1}$ back to parent node $t_k$. We track two key metrics:
 1. **Total Backtrace Count**: Total return steps in the trace.
 2. **Node-Level Induced Regressions ($B(v)$)**: How many times node $v$ induced a backtrack/regression during traversal:
    $$B(v) = \sum_{k=3}^K \mathbb{I}\big(t_k = t_{k-2} \text{ and } t_{k-1} = v\big)$$
@@ -31,9 +38,9 @@ During DFS traversal, whenever $t_k = t_{k-2}$, the transition represents a retu
 Sequential autoregressive rollout ($M \in [10, 20]$) over complex 1D traversal traces ($K \in [30, 50]$) evaluates the model's spatial planning and trajectory consistency.
 
 ### Good Plan Mechanics
-- **Cross-Attention Alignment**: The decoder attends to the correct contextual representations in the encoded DFS memory $H_{src}$, identifying true forward edge transitions.
+- **Cross-Attention Alignment**: The decoder attends to the correct contextual representations in the encoded memory $H_{src}$, identifying true forward edge transitions.
 - **Valid Path Connectivity**: Each predicted step $p_m$ forms a valid edge $(p_{m-1}, p_m) \in E_G$ on the graph, terminating strictly at goal $g$.
-- **Adjacency Compression**: The model successfully filters out return steps ($t_k = t_{k-2}$) and dead-end subtrees embedded in $T$.
+- **Adjacency Compression**: The model successfully filters out return steps ($t_k = t_{k-2}$) and non-optimal loops embedded in $T$.
 
 ### Bad Plan Mechanics & Compounding Errors
 - **Early Prefix Errors**: In long target sequences ($M \in [10, 20]$), an incorrect token choice at early step $m$ introduces an off-path node into the causal decoder context.
@@ -50,6 +57,8 @@ Sequential autoregressive rollout ($M \in [10, 20]$) over complex 1D traversal t
 
 ```python
 config = {
+    "dataset_flavor": "rw_dense", # 'rw_dense' for Dense Random Walk, 'rw' for Random Walk, 'dfs' for Depth-First Search
+    "model_size": "base",        # 'small', 'base', or 'large'
     "restart_training": False,   # Set to True to bypass saved checkpoints and start fresh from epoch 1
     "run_full_training": False,  # Set to True to skip 'epochs_to_train' limit and run full 'total_epochs'
     "resume_training": True,     # Resumes from latest checkpoint if restart_training is False
@@ -63,9 +72,13 @@ config = {
 ```
 
 ### Key Configuration Flags
+- **`dataset_flavor`**:
+  - `"rw_dense"`: Dense Random Walk dataset ($d_{\text{min}} \ge 4$, loops, multi-way decision junctions).
+  - `"rw"`: Sparse Random Walk dataset.
+  - `"dfs"`: Depth-First Search tree exploration dataset.
 - **`restart_training`**:
   - `True`: Ignores existing checkpoints in `checkpoints/` and initializes model weights fresh from epoch 1.
-  - `False`: Automatically attempts to load `ar_graph_transformer_latest.pt`.
+  - `False`: Automatically attempts to load latest checkpoint.
 - **`run_full_training`**:
   - `True`: Trains continuously up to `total_epochs` (e.g., 10,000 epochs) without stopping at `epochs_to_train`.
   - `False`: Runs an interactive chunk of `epochs_to_train` (e.g., 20 epochs) for local verification.
@@ -77,15 +90,21 @@ config = {
 
 ## 4. Directory Structure & Files
 
-- `0.graph_dataset_and_topology_analysis_tutorial.ipynb`: Dataset generation notebook and topological characterization.
+- `0.graph_dataset_and_topology_analysis_tutorial.ipynb`: DFS dataset generation notebook and topological characterization.
+- `0.random_walk_graph_dataset_tutorial.ipynb`: Random walk dataset generation notebook.
+- `0.dense_random_walk_graph_dataset_tutorial.ipynb`: Dense Random Walk dataset generation notebook ($d_{\text{min}} \ge 4$).
 - `0.one_shot_graph_shortest_path_tutorial.ipynb`: One-Shot Non-Autoregressive Transformer tutorial.
 - `1.step_by_step_graph_shortest_path_tutorial.ipynb`: Step-by-Step Autoregressive Graph Shortest Path Transformer tutorial.
-- `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 (13.4% exact match) to Epoch 400 (80.0% exact match).
-- `generate_data_notebook.py`: Programmatic generator for Notebook 0.
+- `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 to Epoch 400.
+- `generate_data_notebook.py`: Programmatic generator for DFS dataset notebook.
+- `generate_rw_data_notebook.py`: Programmatic generator for Random Walk dataset notebook.
+- `generate_rw_dense_data_notebook.py`: Programmatic generator for Dense Random Walk dataset notebook.
 - `generate_notebook.py`: Programmatic generator for One-Shot Notebook.
 - `generate_ar_notebook.py`: Programmatic generator for Autoregressive Notebook.
 - `generate_mechanistic_notebook.py`: Programmatic generator for Mechanistic Analysis Notebook 2.
-- `data/graph_dfs_dataset.pt`: Pre-generated dataset payload.
+- `data/graph_dfs_dataset.pt`: Pre-generated DFS dataset payload.
+- `data/graph_rw_dataset.pt`: Pre-generated RW dataset payload.
+- `data/graph_rw_dense_dataset.pt`: Pre-generated Dense RW dataset payload ($d_{\text{min}} \ge 4$).
 - `data/inference_dataset_epoch_300.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 300.
 - `data/inference_dataset_epoch_400.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 400.
 - `checkpoints/`: Local directory for model checkpoints.

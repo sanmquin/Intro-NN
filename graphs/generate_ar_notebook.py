@@ -7,12 +7,16 @@ def build_ar_notebook():
 
     # Title & Introduction
     title_md = """# 1. Step-by-Step Autoregressive Graph Shortest Path Transformer
-## Sequential Causal Sequence-to-Sequence Modeling for Hardened Algorithmic Traversal Traces
+## Sequential Causal Sequence-to-Sequence Modeling for Dense Algorithmic Traversal Traces
 
 ### Executive Summary & Educational Motivation
 Extracting structural path information from complex, noisy algorithmic execution traces is a fundamental challenge in neural algorithmic reasoning. While **One-Shot (Non-Autoregressive)** models predict all path steps in parallel, **Step-by-Step Autoregressive** models generate the path token-by-token using causal self-attention and cross-attention over the encoded traversal trace.
 
-In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated traversal traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The notebook supports dynamic dataset switching between **Random Walk (`rw`)** and **Depth-First Search (`dfs`)** traversal traces, alongside multi-size network configurations (`small`, `base`, `large`) and dataset-prefixed checkpoint serialization.
+In this tutorial, we implement an **Autoregressive Sequence-to-Sequence Graph Transformer** trained on hardened, candidate-filtered goal-terminated traversal traces ($30 \\le K \\le 50$, target $10 \\le M \\le 20$). The notebook supports dynamic dataset switching between **Dense Random Walk (`rw_dense`)**, **Random Walk (`rw`)**, and **Depth-First Search (`dfs`)** traversal traces, alongside multi-size network configurations (`small`, `base`, `large`) and dataset-prefixed checkpoint serialization.
+
+In the **Dense Random Walk (`rw_dense`)** flavor:
+- **4+ Minimum Node Connectivity**: Every node has a degree $k \\ge 4$ ($d_{\\text{avg}} \\ge 4.5$), presenting at least 4-way bifurcations at every step.
+- **Loops & Cyclical Paths**: The underlying graph contains dense intersecting cycles, testing the model's ability to filter out non-optimal loops and extract direct shortest paths.
 
 ---
 
@@ -97,8 +101,8 @@ DATA_DIR, CKPT_DIR = setup_drive_paths()
 
     # Cell 2: Dataset Loading & PyTorch Dataset Definition
     cell2_md = """### Dataset Loading & PyTorch Dataset Class
-Loads the pre-generated complex dataset ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
-Supports switching dataset flavor (`rw` or `dfs`) dynamically via `config["dataset_flavor"]`.
+Loads the pre-generated dataset ($30 \\le K \\le 50$, $10 \\le M \\le 20$).
+Supports switching dataset flavor (`rw_dense`, `rw`, or `dfs`) dynamically via `config["dataset_flavor"]`.
 - `src`: Input traversal trace padded to `MAX_SRC_LEN=50` with `PAD_TOKEN=40`.
 - `tgt`: Shortest path with `STOP_TOKEN=41` padded to `MAX_TGT_LEN=21` with `PAD_TOKEN=40`.
 """
@@ -107,7 +111,7 @@ Supports switching dataset flavor (`rw` or `dfs`) dynamically via `config["datas
     cell2_code = """# Cell 2: Configurable Dataset Loading & PyTorch Dataset Definition
 
 config = {
-    "dataset_flavor": "rw",      # 'rw' for Random Walk or 'dfs' for Depth-First Search
+    "dataset_flavor": "rw_dense", # 'rw_dense' for Dense Random Walk, 'rw' for Random Walk, 'dfs' for Depth-First Search
     "model_size": "base",        # 'small', 'base', or 'large'
     "restart_training": False,   # Set to True to skip existing checkpoints and start fresh
     "run_full_training": False,  # Set to True to train for total_epochs ignoring epochs_to_train
@@ -124,7 +128,7 @@ dataset_filename = f"graph_{config['dataset_flavor']}_dataset.pt"
 DATASET_PATH = os.path.join(DATA_DIR, dataset_filename)
 
 if not os.path.exists(DATASET_PATH):
-    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset notebook to generate '{dataset_filename}'.")
+    raise FileNotFoundError(f"Dataset file not found at '{DATASET_PATH}'. Please run dataset generator to create '{dataset_filename}'.")
 
 print(f"Loading dataset payload from '{DATASET_PATH}' (Flavor: {config['dataset_flavor'].upper()})...")
 dataset_payload = torch.load(DATASET_PATH, weights_only=False)
@@ -629,11 +633,11 @@ with torch.no_grad():
     pred_rollout = model.solve_graph_autoregressive(sample_src_b, src_key_padding_mask=sample_mask_b)[0]
 
 plt.figure(figsize=(10, 7))
-pos = nx.spring_layout(G_sample, seed=42)
+pos = nx.kamada_kawai_layout(G_sample)
 
 # Draw base graph
 nx.draw_networkx_nodes(G_sample, pos, node_color='lightgray', node_size=550)
-nx.draw_networkx_edges(G_sample, pos, edge_color='silver', width=1.5)
+nx.draw_networkx_edges(G_sample, pos, edge_color='silver', width=1.5, alpha=0.7)
 
 # Highlight Shortest Path Edges
 sp_edges = [(sample_sp[i], sample_sp[i+1]) for i in range(len(sample_sp)-1)]
@@ -650,9 +654,9 @@ nx.draw_networkx_labels(G_sample, pos, labels=labels, font_size=9, font_weight='
 trace_str = f"Original Input {config['dataset_flavor'].upper()} Trace (K={len(sample_trace)}):\\n" + ", ".join(map(str, sample_trace[:25])) + "\\n" + ", ".join(map(str, sample_trace[25:]))
 sp_str = f"Target Shortest Path (M={len(sample_sp)}): {sample_sp}"
 pred_str = f"Autoregressive Predicted Path: {pred_rollout}"
-backtrack_str = f"Total Backtracks: {backtracks_sample} | Node Regressions: {dict(list(node_backtraces_sample.items())[:5])}"
+deg_str = f"Nodes N={G_sample.number_of_nodes()} | Edges |E|={G_sample.number_of_edges()} | Min Deg={min(d for _, d in G_sample.degree())} | Avg Deg={sum(d for _, d in G_sample.degree())/G_sample.number_of_nodes():.2f}"
 
-plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{backtrack_str}",
+plt.gcf().text(0.12, 0.02, f"{trace_str}\\n{sp_str}\\n{pred_str}\\n{deg_str}",
                fontsize=9, bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.9, edgecolor='gray'))
 
 plt.title(f"Autoregressive Shortest Path Prediction Layout ({config['dataset_flavor'].upper()})", fontsize=13, fontweight='bold', pad=15)
@@ -677,8 +681,8 @@ print("Publication-quality figures generated and saved.")
     # Cell 8: Plan Mechanics Analysis & Summary
     cell8_md = """### Self-Reflection & Mechanics of Good vs. Bad Plans
 
-1. **Impact of Hardened Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$)**:
-   Increasing input traversal trace length to 30-50 tokens and shortest path target length to 10-20 steps significantly increases sequential reasoning complexity. The model must process stochastic or tree-structured traces with multiple backtrace regressions.
+1. **Impact of Hardened Dense Trajectories ($30 \\le K \\le 50$, $10 \\le M \\le 20$, $d_{\\text{min}} \\ge 4$)**:
+   In dense random walk traces, every state transition faces at least 4 candidate outgoing edges (4-way bifurcations) and abundant cyclical loops. The Transformer must learn to filter non-optimal loops and identify the true shortest path.
 2. **Mechanics of a Good Plan vs. a Bad Plan**:
    - **Good Plan**: The autoregressive decoder successfully attends to valid cross-attention memory transitions, predicting step $p_m$ aligned with the graph adjacency matrix $A$.
    - **Bad Plan & Compounding Errors**: In long target sequences ($M \\in [10, 20]$), an early prediction error at step $m$ feeds an off-path token back into the causal decoder context. This causes compounding errors where the model loses spatial trajectory context and fails rollout exact match.
