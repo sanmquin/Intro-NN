@@ -489,6 +489,10 @@ We created a dedicated mechanistic analysis notebook `graphs/2.mechanistic_inter
 - **Logit Margin Amplification**: Step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision confidence boundaries.
 - **Causal Activation Patching**: Causal memory patching proves that the phase transition requires holistic alignment between Encoder representations and Decoder Cross-Attention routing mechanisms.
 
+### Anthropic J-Space Causal Interpretability & Residual Steering
+- **Residual Stream Jacobian ($h_1 \to h_2$)**: Computing downstream Jacobians $J_{h_1} = \nabla_{h_1}(z_c - z_w)$ over Epoch 300 residual activations (between Decoder Layer 1 & 2) isolates the steering direction required to convert step errors into target tokens, driving logit margins from negative to $\Delta z > +6.0$.
+- **Attention Map Traceback ($J_{h_1} \to J_A$)**: Backpropagating $J_{h_1}$ through Layer 1 cross-attention yields the attention Jacobians $J_A = \nabla_A \Delta z$, demonstrating how attention weights re-allocate away from off-path distractor nodes and onto true forward graph edge tokens in the 1D DFS trace.
+
 ### Reusable Exported Inference Datasets
 Full evaluation payloads for both checkpoints are exported to `graphs/data/inference_dataset_epoch_300.pt` and `graphs/data/inference_dataset_epoch_400.pt`, containing input DFS traces, target paths, predicted paths, graph topology metrics, memory tensors, logit margins, and cross-attention entropy maps.
 
@@ -496,6 +500,7 @@ Full evaluation payloads for both checkpoints are exported to `graphs/data/infer
 - `charts/ckpt_comparison_mechanistic_metrics.png`: Layer-wise weight deltas, cross-attention entropy sharpening, and logit margin amplification.
 - `charts/good_vs_bad_topology_activations.png`: Topological distributions ($M$, $B$) and activation profiles comparing good vs. bad predictions.
 - `charts/causal_transition_and_patching.png`: Transition matrix breakdown (68% improved samples), first error step index histogram, and causal patching results.
+- `charts/jspace_causal_steering_and_attention.png`: J-Space residual stream steering logit margin amplification, target token probability shifts, and Layer 1 cross-attention Jacobian traceback maps ($J_A$).
 
 ---
 
