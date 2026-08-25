@@ -499,6 +499,25 @@ Full evaluation payloads for both checkpoints are exported to `graphs/data/infer
 
 ---
 
+## Task 16: Topological Difficulty Modeling and Step-by-Step Error Prediction
+We created a new tutorial notebook `graphs/3.topological_difficulty_and_step_error_prediction_tutorial.ipynb` that models what makes a given autoregressive step difficult based on graph topology, enabling the mechanistic decoupling of inherent task difficulty from model attention failures.
+
+### Predictor Performance & Error Decoupling
+- **Step Dataset Payload (`graphs/data/step_error_classification_dataset.pt`)**: Serializes 6,932 step decision instances across Epoch 300 and Epoch 400 validation inferences, linking classification layer outputs (top-1 logit, logit margin $\Delta z_m$, target token probability, target token rank, cross-attention entropy) to step-level graph topology features.
+- **Topological Predictor Accuracy**: Non-transformer classifiers trained strictly on graph topology features predict step-level decision difficulty with high precision:
+  - **Random Forest**: $\text{ROC-AUC} = 0.9867$, $\text{PR-AUC} = 0.9978$, $\text{Accuracy} = 96.83\%$.
+  - **Gradient Boosting**: $\text{ROC-AUC} = 0.9864$, $\text{PR-AUC} = 0.9977$, $\text{Accuracy} = 97.48\%$.
+  - **MLP Classifier**: $\text{ROC-AUC} = 0.9892$, $\text{PR-AUC} = 0.9982$, $\text{Accuracy} = 97.19\%$.
+- **Top Topological Drivers**: Relative step depth ($\tau_m = m / M$, Gini $0.648$), step index ($m$, Gini $0.143$), shortest path length ($M$, Gini $0.036$), node out-degree ($k_{\text{out}}$, Gini $0.028$), and decoy neighbor ratio ($\eta_{\text{decoy}}$) drive step errors.
+- **Mechanistic Error Decoupling**: Categorizes prediction errors into **Topologically Difficult Errors** ($D(m) \ge 0.5$) vs. **Attention Misrouting Failures** ($D(m) < 0.5$, model failed despite easy graph topology).
+
+### Charts & Visual Assets
+- `charts/topological_feature_importance.png`: Gini feature importance bar chart ranking topological difficulty indicators.
+- `charts/step_difficulty_roc_pr_curves.png`: ROC and Precision-Recall curves comparing non-transformer predictor models.
+- `charts/error_decoupling_topology_vs_attention.png`: Donut chart/breakdown of error types and cross-attention entropy distributions across decoupled categories.
+
+---
+
 ## Task 10: Bidirectional Linear Attention Labyrinth Solver: Gated DeltaNet vs. KIMI LINEAR
 
 We designed and implemented a thorough from-scratch tutorial on **Linear Attention** models in `labs/7.linear_attention_labyrinth_solver_tutorial.ipynb`. This notebook provides deep conceptual derivations, full mathematical formulations, from-scratch PyTorch modules, training loops, multi-step rollout benchmarks, and visual gate interpretability analysis.

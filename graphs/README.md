@@ -102,17 +102,20 @@ config = {
 - `0.one_shot_graph_shortest_path_tutorial.ipynb`: One-Shot Non-Autoregressive Transformer tutorial.
 - `1.step_by_step_graph_shortest_path_tutorial.ipynb`: Step-by-Step Autoregressive Graph Shortest Path Transformer tutorial.
 - `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb`: Mechanistic interpretability and causal activation patching tutorial dissecting the phase transition from Epoch 300 to Epoch 400.
+- `3.topological_difficulty_and_step_error_prediction_tutorial.ipynb`: Topological difficulty modeling and step-by-step error prediction notebook decoupling task difficulty from attention misrouting.
 - `generate_data_notebook.py`: Programmatic generator for DFS dataset notebook.
 - `generate_rw_data_notebook.py`: Programmatic generator for Sparse Random Walk dataset notebook.
 - `generate_rw_dense_data_notebook.py`: Programmatic generator for Dense Random Walk dataset notebook.
 - `generate_notebook.py`: Programmatic generator for One-Shot Notebook.
 - `generate_ar_notebook.py`: Programmatic generator for Autoregressive Notebook.
 - `generate_mechanistic_notebook.py`: Programmatic generator for Mechanistic Analysis Notebook 2.
+- `generate_difficulty_notebook.py`: Programmatic generator for Topological Difficulty Notebook 3.
 - `data/graph_dfs_dataset.pt`: Pre-generated DFS dataset payload.
 - `data/graph_rw_dataset.pt`: Pre-generated RW dataset payload.
 - `data/graph_rw_dense_dataset.pt`: Pre-generated Dense RW dataset payload ($d_{\text{min}} \ge 4$, Best-of-N $Q$).
 - `data/inference_dataset_epoch_300.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 300.
 - `data/inference_dataset_epoch_400.pt`: Reusable exported validation set evaluation dataset with per-step activation parameters for Epoch 400.
+- `data/step_error_classification_dataset.pt`: Reusable step-level evaluation dataset containing 6,932 step instances with full classification layer outputs and graph topology features.
 - `checkpoints/`: Local directory for model checkpoints.
 - `charts/`: Output visualization figures.
 
@@ -128,16 +131,19 @@ Notebook `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb` ana
 - **Logit Margin Amplification**: Mean step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision margins.
 - **Transition Breakdown**: Out of 500 validation samples, **340 samples (68.0%)** improve from incorrect to correct exact matches, **60 samples (12.0%)** remain correct, **93 samples (18.6%)** remain failed, and **7 samples (1.4%)** regress.
 
-### Serialized Inference Datasets Schema
-Annotated evaluation datasets are exported to `data/inference_dataset_epoch_300.pt` and `data/inference_dataset_epoch_400.pt`. Each payload contains:
-- `metadata`: `{ 'epoch': int, 'num_samples': int (500), 'rollout_exact_match_acc': float, 'vocab_size': int (42) }`
-- `samples`: List of 500 sample dictionaries:
-  - `sample_id`: Sample index ($0 \le i < 500$)
-  - `input_trace`: `torch.Tensor` (long, `[K]`)
-  - `target_path`: `torch.Tensor` (long, `[M]`)
-  - `predicted_path`: `torch.Tensor` (long, `[M_pred]`)
-  - `exact_match`: `bool`
-  - `valid_path_connectivity`: `bool`
-  - `error_step_index`: `int` (First error token position, -1 if exact match)
-  - `topology`: `{ 'trace_len': int, 'sp_len': int, 'backtracks': int, 'num_nodes': int, 'num_edges': int, 'density': float }`
-  - `activations`: `{ 'memory_tensor': Tensor [K, 16], 'logit_margins': Tensor [M], 'cross_attn_entropies': Tensor [M], 'avg_memory_norm': float, 'avg_logit_margin': float, 'avg_cross_attn_entropy': float }`
+---
+
+## 6. Topological Difficulty & Step Error Prediction (Notebook 3)
+
+Notebook `3.topological_difficulty_and_step_error_prediction_tutorial.ipynb` models what makes a given autoregressive step difficult based on graph topology, enabling the mechanistic decoupling of inherent task difficulty from model attention failures.
+
+### Key Findings & Benchmark Metrics
+- **Step Dataset Payload (`data/step_error_classification_dataset.pt`)**: Serializes 6,932 step decision instances across Epoch 300 and Epoch 400 validation inferences, linking classification layer outputs (top-1 logit, logit margin $\Delta z_m$, target token probability, target token rank, cross-attention entropy) to step-level graph topology features.
+- **Predictor Model Performance**: Non-transformer classifiers trained strictly on graph topology features predict step-level decision difficulty with high precision:
+  - **Random Forest**: $\text{ROC-AUC} = 0.9867$, $\text{PR-AUC} = 0.9978$, $\text{Accuracy} = 96.83\%$.
+  - **Gradient Boosting**: $\text{ROC-AUC} = 0.9864$, $\text{PR-AUC} = 0.9977$, $\text{Accuracy} = 97.48\%$.
+  - **MLP Classifier**: $\text{ROC-AUC} = 0.9892$, $\text{PR-AUC} = 0.9982$, $\text{Accuracy} = 97.19\%$.
+- **Top Topological Difficulty Drivers**: Feature importance analysis reveals that relative step depth ($\tau_m = m / M$, Gini $0.648$), step index ($m$, Gini $0.143$), shortest path length ($M$, Gini $0.036$), node out-degree ($k_{\text{out}}$, Gini $0.028$), and decoy neighbor ratio ($\eta_{\text{decoy}}$) are the primary graph features driving step errors.
+- **Mechanistic Error Decoupling**:
+  - **Topologically Difficult Errors**: Errors occurring at high topological complexity decisions ($D(m) \ge 0.5$).
+  - **Attention Misrouting Failures**: Errors occurring at topologically simple decisions ($D(m) < 0.5$) where prediction failed due to cross-attention misrouting / high entropy.
