@@ -127,6 +127,14 @@ All Jupyter Notebooks created or modified in this repository must strictly adher
 * Include a justification for the selected model architecture in the relevant section.
 * Use plenty of charts to show the results visually.
 
-### 5.7 Summary Contribution to README
+### 5.7 Preservation of Historical Notebooks and Results
+* **Never overwrite, modify, or destroy previous notebook files or results** when introducing a new experiment, solver, or interpretability technique.
+* Always create a new, dedicated tutorial notebook (e.g., `5.jspace_causal_steering_and_attention_tutorial.ipynb`) with an incremental numerical index to preserve past findings and maintain a clean research progression.
+
+### 5.8 Self-Contained Inline Figure Rendering
+* All visualization plotting cells must execute `plt.show()` (or display the figure) directly within the cell output in addition to calling `plt.savefig()`.
+* This guarantees that charts are rendered inline inside the notebook itself when viewed on GitHub, Jupyter, or Google Colab, making the notebook completely self-contained.
+
+### 5.9 Summary Contribution to README
 * Each notebook contributes to a larger research project.
 * After completing a notebook, include a complete summary in the main project `README.md` so that the results provide context for future experiments and can be easily consolidated into a formal research paper.
