@@ -130,6 +130,9 @@ Notebook `2.mechanistic_interpretability_and_causal_analysis_tutorial.ipynb` ana
 - **Cross-Attention Sharpening**: Layer 1 cross-attention entropy drops sharply from **0.87 nats** to **0.40 nats**, reflecting learned precision in locating target step nodes within 1D DFS traces.
 - **Logit Margin Amplification**: Mean step logit margin $\Delta z = z_{\text{top1}} - z_{\text{top2}}$ increases from **2.92** to **5.75**, providing robust decision margins.
 - **Transition Breakdown**: Out of 500 validation samples, **340 samples (68.0%)** improve from incorrect to correct exact matches, **60 samples (12.0%)** remain correct, **93 samples (18.6%)** remain failed, and **7 samples (1.4%)** regress.
+- **Anthropic J-Space Causal Interpretability**:
+  - **Downstream Residual Jacobian Steering ($h_1 \to h_2$)**: Computing downstream Jacobian $J_{h_1} = \nabla_{h_1}(z_c - z_w)$ over Epoch 300 residual activations (between Decoder Layer 1 & 2) isolates the steering direction required to convert error predictions into ground-truth target tokens, recovering target tokens with logit margin amplification $\Delta z > +6.0$.
+  - **Attention Map Traceback ($J_{h_1} \to J_A$)**: Backpropagating $J_{h_1}$ through Layer 1 cross-attention reveals the attention Jacobians $J_A = \nabla_A \Delta z$, demonstrating that steering shifts attention weight away from distractor/decoy tokens and re-allocates attention mass onto valid forward edge transitions in the 1D DFS execution trace.
 
 ---
 
